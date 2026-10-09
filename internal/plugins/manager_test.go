@@ -42,6 +42,8 @@ type memStore struct {
 	insertErr error
 	// deleteErr, when set, makes DeletePlugin fail.
 	deleteErr error
+	// upgradeErr, when set, makes UpgradePlugin fail.
+	upgradeErr error
 	// publishers is plugin_publishers (issue 15), keyed by lower-cased name
 	// because the real column is COLLATE NOCASE. EMPTY IS THE DEFAULT POLICY:
 	// with nothing pinned, no install is signature-checked.
@@ -244,6 +246,24 @@ func (s *memStore) SetPluginSigner(id, publisher, keyID string) error {
 	return nil
 }
 
+func (s *memStore) UpgradePlugin(p store.PluginUpgrade) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upgradeErr != nil {
+		return s.upgradeErr
+	}
+	r, ok := s.rows[p.ID]
+	if !ok {
+		return fmt.Errorf("plugin %q has no row", p.ID)
+	}
+	r.Name, r.Version, r.APIVersion, r.Provides, r.Source, r.Origin = p.Name, p.Version, p.APIVersion, p.Provides, p.Source, p.Origin
+	r.Publisher, r.KeyID = p.Publisher, p.KeyID
+	r.SignerName, r.SignerKey, r.SignerKeyID = p.SignerName, p.SignerKey, p.SignerKeyID
+	r.LastError = ""
+	s.rows[p.ID] = r
+	return nil
+}
+
 func (s *memStore) SetPluginSignerKey(id, name, key, keyID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,6 +304,13 @@ const builtinSlug = "a-built-in"
 
 func newManagerFixture(t *testing.T) *managerFixture {
 	t.Helper()
+	return newManagerFixtureWith(t, func(*plugins.ManagerConfig) {})
+}
+
+// newManagerFixtureWith is newManagerFixture with the Manager's config adjusted
+// before it is built (a Bundled source, an OnChange hook).
+func newManagerFixtureWith(t *testing.T, adjust func(*plugins.ManagerConfig)) *managerFixture {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), plugins.DirName)
 
 	f := &managerFixture{dir: dir, registry: pluginapi.NewRegistry(), store: newMemStore()}
@@ -301,7 +328,7 @@ func newManagerFixture(t *testing.T) *managerFixture {
 	if err != nil {
 		t.Fatalf("loading an empty plugins directory: %v", err)
 	}
-	f.manager = plugins.NewManager(plugins.ManagerConfig{
+	cfg := plugins.ManagerConfig{
 		Dir:      dir,
 		Registry: f.registry,
 		Set:      set,
@@ -310,7 +337,9 @@ func newManagerFixture(t *testing.T) *managerFixture {
 		Base:     base,
 		Reload:   func(context.Context) error { f.reloads.Add(1); return nil },
 		Logf:     func(string, ...any) {},
-	})
+	}
+	adjust(&cfg)
+	f.manager = plugins.NewManager(cfg)
 	t.Cleanup(func() { _ = f.manager.Close(context.Background()) })
 	return f
 }
@@ -485,20 +514,22 @@ func TestEveryInstallRefusalLeavesNothingBehind(t *testing.T) {
 // TestADuplicateIdIsRefusedThreeWays: the id is the directory, the settings row
 // and the registry slug all at once, so three different things can already hold
 // it — and installing over a Built-in would be the worst of them, because it would
-// move an Admin's signing secret onto code the maintainer did not write.
+// move an Admin's signing secret onto code the maintainer did not write. An id an
+// Installed plugin holds is an upgrade candidate since ADR-0069, so uploading the
+// SAME version is refused as a version problem and not as a duplicate.
 func TestADuplicateIdIsRefusedThreeWays(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.installGuest(t, "example-sink")
 
-	for _, id := range []string{"example-sink", builtinSlug} {
+	for id, want := range map[string]string{"example-sink": plugins.ReasonVersion, builtinSlug: plugins.ReasonDuplicate} {
 		t.Run(id, func(t *testing.T) {
 			m := plugintest.SinkManifest(id)
 			_, err := f.manager.Install(context.Background(),
 				mustJSON(t, m), plugintest.Guest(t), nil, plugins.SourceUpload)
-			if got := refusalReason(err); got != plugins.ReasonDuplicate {
+			if got := refusalReason(err); got != want {
 				t.Fatalf("installing over %q gave reason %q, want %q (err: %v)",
-					id, got, plugins.ReasonDuplicate, err)
+					id, got, want, err)
 			}
 			if !strings.Contains(err.Error(), id) {
 				t.Fatalf("the refusal %q does not name the id that is taken", err)

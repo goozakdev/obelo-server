@@ -9,6 +9,7 @@ import LyricProviderOrder from "./LyricProviderOrder";
 import type {
   InstalledPlugin,
   InstalledPluginsView,
+  InstallPluginAnswer,
   PluginCatalogEntry,
   PluginCatalogView,
   PluginPublishersView,
@@ -330,6 +331,29 @@ export default function AdminPluginsScreen() {
     return runAction(action, setView, message);
   }
 
+  // An install answers with the list, except an in-place upgrade (ADR-0069), which
+  // answers with the one plugin and a summary: take the list back by asking for it,
+  // and say what was upgraded. The full upgrade UI is a later issue.
+  function runInstall(call: () => Promise<InstallPluginAnswer>, message: string) {
+    return runAction(
+      async () => {
+        const got = await call();
+        if ("plugins" in got) return { list: got, upgraded: null };
+        // The upgrade HAS happened; a failed refetch must not read as if it had not.
+        const list = await apiClient.getPlugins().catch(() => null);
+        return { list, upgraded: got };
+      },
+      (r) => {
+        if (r.list) setView(r.list);
+      },
+      (r) =>
+        r.upgraded
+          ? `Upgraded ${r.upgraded.name} from ${r.upgraded.upgrade.from} to ${r.upgraded.upgrade.to}.` +
+            (r.list ? "" : " Refresh the page to see it.")
+          : message,
+    );
+  }
+
   // A Sign-in provider is never uninstalled on one click: the server is asked
   // who it would delete, and the dialog shows them until the Admin decides. Every
   // other plugin uninstalls at once, as it always has.
@@ -393,7 +417,7 @@ export default function AdminPluginsScreen() {
     // The signature, if the plugin has one, is inside the package. Whether THIS
     // server needs one is a question only the server can answer, from the keys
     // its Admin pinned.
-    if (await run(() => apiClient.installPlugin(pkg), "Installed.")) {
+    if (await runInstall(() => apiClient.installPlugin(pkg), "Installed.")) {
       if (packageRef.current) packageRef.current.value = "";
     }
   }
@@ -405,7 +429,7 @@ export default function AdminPluginsScreen() {
       setNotice(null);
       return;
     }
-    if (await run(() => apiClient.installPluginFromURL({ url: target }), "Installed.")) {
+    if (await runInstall(() => apiClient.installPluginFromURL({ url: target }), "Installed.")) {
       setUrl("");
     }
   }
@@ -415,9 +439,8 @@ export default function AdminPluginsScreen() {
   // the request an Admin's own pasted address goes through, so an entry pointing
   // into this network is refused by the same policy, in the same words.
   async function onInstallEntry(entry: PluginCatalogEntry) {
-    await run(
-      () =>
-        apiClient.installPluginFromURL({ url: entry.packageUrl }),
+    await runInstall(
+      () => apiClient.installPluginFromURL({ url: entry.packageUrl }),
       `Installed ${entry.name}.`,
     );
   }

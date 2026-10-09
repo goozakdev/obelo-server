@@ -2657,6 +2657,24 @@ export interface InstalledPluginsView {
   plugins: InstalledPlugin[];
 }
 
+/** What an install answers when it was an in-place upgrade (ADR-0069): the one
+ * plugin, plus a summary, with status 200 instead of the list a fresh install
+ * answers with. */
+export interface PluginUpgradeAnswer extends InstalledPlugin {
+  upgrade: {
+    from: string;
+    to: string;
+    /** Set only when a pinned key (or the Obelo key) verified the package. */
+    publisher?: string;
+    /** An unpinned signer's self-declared name: a claim, beside its keyId. */
+    claimedPublisher?: string;
+    keyId?: string;
+  };
+}
+
+/** The answer to an install: the full list (fresh install) or an upgrade summary. */
+export type InstallPluginAnswer = InstalledPluginsView | PluginUpgradeAnswer;
+
 /** One User an uninstall of a Sign-in provider would delete. */
 export interface PluginUninstallUser {
   id: string;

@@ -87,6 +87,7 @@ import type {
   EventSinksView,
   UpdateEventSinksInput,
   InstalledPluginsView,
+  InstallPluginAnswer,
   PluginUninstallPreview,
   InstallPluginFromURLInput,
   PluginCatalogView,
@@ -2046,10 +2047,10 @@ export class ApiClient {
    * are unsigned, and whether this server requires one is decided by the
    * publisher keys its Admin pinned, server-side, with a refusal that names the
    * publisher the plugin claimed. */
-  installPlugin(pkg: File | Blob, signal?: AbortSignal): Promise<InstalledPluginsView> {
+  installPlugin(pkg: File | Blob, signal?: AbortSignal): Promise<InstallPluginAnswer> {
     const form = new FormData();
     form.append("package", pkg);
-    return this.request<InstalledPluginsView>("/settings/plugins", {
+    return this.request<InstallPluginAnswer>("/settings/plugins", {
       method: "POST",
       body: form,
       signal,
@@ -2064,8 +2065,8 @@ export class ApiClient {
   installPluginFromURL(
     input: InstallPluginFromURLInput,
     signal?: AbortSignal,
-  ): Promise<InstalledPluginsView> {
-    return this.request<InstalledPluginsView>("/settings/plugins/from-url", {
+  ): Promise<InstallPluginAnswer> {
+    return this.request<InstallPluginAnswer>("/settings/plugins/from-url", {
       method: "POST",
       body: input,
       signal,

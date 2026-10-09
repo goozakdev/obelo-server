@@ -51,3 +51,61 @@ func TestMigrationLeavesExistingPluginRowsWithNoKey(t *testing.T) {
 		t.Fatalf("a pre-existing row gained a key: %+v", r)
 	}
 }
+
+func TestUpgradePluginReplacesTheRowsFactsAndSignerAndNothingElse(t *testing.T) {
+	db := openTemp(t)
+	if err := db.InsertPlugin(store.PluginInsert{ID: "p", Name: "Old", Version: "1.0.0", APIVersion: 1,
+		Provides: []string{"event-sink"}, Source: plugins.SourceUpload, Origin: plugins.OriginBundled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetPluginSigner("p", "Pinned", "kid-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetPluginSignerKey("p", "Pub", "a2V5", "kid-old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SetPluginEnabled("p", false); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := db.Plugins()
+
+	if err := db.UpgradePlugin(store.PluginUpgrade{ID: "p", Name: "New", Version: "1.1.0", APIVersion: 1,
+		Provides: []string{"event-sink", "subtitle-provider"}, Source: "https://x.test/p.zip", Origin: plugins.OriginAdmin,
+		SignerName: "Pub", SignerKey: "a2V5", SignerKeyID: "kid-old"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Plugins()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("Plugins() = %v, %v", rows, err)
+	}
+	r := rows[0]
+	if r.Name != "New" || r.Version != "1.1.0" || len(r.Provides) != 2 || r.Source != "https://x.test/p.zip" || r.Origin != plugins.OriginAdmin {
+		t.Fatalf("the facts were not replaced: %+v", r)
+	}
+	if r.Publisher != "" || r.KeyID != "" {
+		t.Fatalf("the previous version's pinned publisher survived: %q / %q", r.Publisher, r.KeyID)
+	}
+	if r.SignerKey != "a2V5" || r.SignerName != "Pub" {
+		t.Fatalf("the signer was not recorded: %+v", r)
+	}
+	if r.Enabled || r.InstalledAt != before[0].InstalledAt {
+		t.Fatalf("the enable switch or install time changed: %+v", r)
+	}
+	if err := db.UpgradePlugin(store.PluginUpgrade{ID: "nobody"}); err == nil {
+		t.Fatal("upgrading a row that does not exist reported success")
+	}
+}
+
+func TestUpdatePluginManifestSetsTheSourceBackToTheShippedMarker(t *testing.T) {
+	db := openTemp(t)
+	if err := db.InsertPlugin(store.PluginInsert{ID: "p", Version: "2.0.0", Source: plugins.SourceUpload, Origin: plugins.OriginBundled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdatePluginManifest(store.PluginInsert{ID: "p", Version: "3.0.0", Source: "shipped with obelo", Origin: plugins.OriginBundled}); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := db.Plugins()
+	if len(rows) != 1 || rows[0].Source != "shipped with obelo" || rows[0].Version != "3.0.0" {
+		t.Fatalf("row = %+v, want source back to the shipped marker", rows)
+	}
+}

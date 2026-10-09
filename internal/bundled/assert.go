@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
+	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	"github.com/goozakdev/obelo-server/internal/store"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -189,7 +190,12 @@ func (s *Source) assert(_ context.Context, id string, row store.PluginRow) error
 		// newer version — comparing what is ON DISK, because that is what the
 		// loader will read, rather than what the row remembers.
 		installed := s.installedVersion(id)
-		if !olderThan(installed, shipped.Version) {
+		// An unreadable version is "replace it" for a copy this server wrote itself,
+		// and NOT for one an Admin upgraded with an Obelo-signed upload: that one is
+		// replaced only by a shipped version that is strictly newer than a version
+		// we can read (ADR-0069).
+		_, readable := versionParts(installed)
+		if !olderThan(installed, shipped.Version) || (!readable && s.isUploadUpgrade(row)) {
 			s.recordExisting(id, row)
 			return nil
 		}
@@ -257,6 +263,15 @@ func (s *Source) assert(_ context.Context, id string, row store.PluginRow) error
 	}
 	s.logf("obelo: the plugin %s (%s %s) shipped with this server and was installed", shipped.ID, shipped.Name, shipped.Version)
 	return nil
+}
+
+// isUploadUpgrade reports whether a row is a Bundled copy an Admin upgraded by
+// uploading an Obelo-signed package: bundled origin, the Obelo release key recorded as
+// its signer, and a source other than the shipped-copy marker. It is only ever true on
+// a release build, which is the only build that can tell.
+func (s *Source) isUploadUpgrade(row store.PluginRow) bool {
+	return s.releaseKey != nil && row.Origin == plugins.OriginBundled &&
+		row.SignerKey == signing.EncodeKey(s.releaseKey) && row.Source != SourceShipped
 }
 
 // SourceShipped is the provenance recorded on a Bundled plugin's row, where an

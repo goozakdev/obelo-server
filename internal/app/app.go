@@ -690,6 +690,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// uninstalled, are both left exactly alone; internal/bundled holds the table
 	// and the reasons. Nothing here can stop a boot: a plugin whose files could not
 	// be written is a logged line and a provider that is not there.
+	// An upgrade a crash interrupted is finished or undone first, so the assertion
+	// below and the loader after it see one consistent directory (ADR-0069).
+	plugins.RecoverUpgrades(filepath.Join(cfg.DataDir, plugins.DirName), db, log.Printf)
 	shipped := bundled.NewSource(cfg.DataDir, db, log.Printf)
 	shipped.AssertAll(context.Background())
 

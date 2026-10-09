@@ -55,3 +55,12 @@ func parallel(t *testing.T) {
 
 // Parallel is parallel for the external test package.
 func Parallel(t *testing.T) { t.Helper(); parallel(t) }
+
+// CheckUpgradeVersion is checkUpgradeVersion for the external test package: nil when
+// offered is a strictly higher semantic version than installed.
+func CheckUpgradeVersion(id, installed, offered string) error {
+	return checkUpgradeVersion(id, installed, offered)
+}
+
+// SetUpgradeHookForTest makes every upgrade report the aside directory it uses.
+func (m *Manager) SetUpgradeHookForTest(h func(aside string)) { m.onAside = h }

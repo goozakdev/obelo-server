@@ -98,6 +98,20 @@ func verifyDocument(doc []byte, pub ed25519.PublicKey, manifest, module []byte) 
 	return sig, nil
 }
 
+// ReleaseKey is the Obelo release key this build carries, for the plugin Manager's
+// upgrade rule: an upload over a bundled-origin row must verify under it. release is
+// false on a dev build; it is true with an empty key when a key was compiled in but
+// cannot be read, so that nothing can be verified against it.
+func (s *Source) ReleaseKey() (name, publicKey string, release bool) {
+	if s.keyErr != nil {
+		return ReleaseSigner, "", true
+	}
+	if s.releaseKey == nil {
+		return "", "", false
+	}
+	return ReleaseSigner, signing.EncodeKey(s.releaseKey), true
+}
+
 // recordKey writes the Obelo key on a bundled row, as a signed install does.
 func (s *Source) recordKey(id string) error {
 	return s.store.SetPluginSignerKey(id, ReleaseSigner, signing.EncodeKey(s.releaseKey), signing.KeyID(s.releaseKey))

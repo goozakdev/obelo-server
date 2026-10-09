@@ -137,6 +137,28 @@ describe("the catalog", () => {
     expect(screen.getByTestId("plugins-notice").textContent).toContain("Discord");
   });
 
+  it("takes an upgrade answer on the catalog route by refetching the list", async () => {
+    client.getPluginCatalog.mockResolvedValue(catalog());
+    client.installPluginFromURL.mockResolvedValue({
+      ...installedDiscord(),
+      version: "0.2.0",
+      upgrade: { from: "0.1.0", to: "0.2.0" },
+    });
+    client.getPlugins
+      .mockResolvedValueOnce({ plugins: [] })
+      .mockResolvedValueOnce({ plugins: [{ ...installedDiscord(), version: "0.2.0" }] });
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+    await userEvent.click(screen.getByTestId("plugin-tab-browse"));
+    await userEvent.click(screen.getByTestId("catalog-install-discord"));
+
+    expect((await screen.findByTestId("plugins-notice")).textContent).toContain(
+      "Upgraded Discord from 0.1.0 to 0.2.0.",
+    );
+    expect(client.getPlugins).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the server's own sentence when an entry is refused", async () => {
     client.getPluginCatalog.mockResolvedValue(catalog());
     client.installPluginFromURL.mockRejectedValue(

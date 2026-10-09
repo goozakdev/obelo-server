@@ -181,6 +181,9 @@ type Installed struct {
 	// uninstalled — and its row is the one the screen offers "reinstall the
 	// shipped version" on. Empty for every installed Plugin.
 	State string `json:"state,omitempty"`
+	// Upgrade is present ONLY on the answer to an install that was an in-place upgrade
+	// of a plugin already here (ADR-0069); a listing never carries it.
+	Upgrade *UpgradeSummary `json:"upgrade,omitempty"`
 	// SettingsSchema is what this Plugin's manifest declares about its OWN settings
 	// (issue 13), straight from the file on disk: the ordered field list the web app
 	// renders a form from. Empty for a Plugin configured entirely through the fixed
@@ -236,6 +239,9 @@ type ManagerStore interface {
 	// SetPluginSignerKey records the signer's public key on every signed install,
 	// pinned or not (trust on first install, ADR-0069).
 	SetPluginSignerKey(id, name, key, keyID string) error
+	// UpgradePlugin replaces an existing row's manifest facts, provenance, origin and
+	// signer after an in-place upgrade (ADR-0069).
+	UpgradePlugin(p store.PluginUpgrade) error
 	// PluginCatalogURL / SetPluginCatalogURL are the operator's chosen index —
 	// empty by default, and empty means this server browses no catalog at all.
 	PluginCatalogURL() (string, error)
@@ -327,6 +333,8 @@ type Manager struct {
 	client   *http.Client
 	logf     func(string, ...any)
 	bundled  BundledSource
+	// onAside, set only by a test, hears the directory an upgrade moves the old files to.
+	onAside func(aside string)
 
 	allowPrivateSources bool
 
@@ -815,57 +823,21 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	if err != nil {
 		return Installed{}, err
 	}
+	// An id an Installed plugin already holds is an upgrade candidate, not a
+	// duplicate (ADR-0069); an id a Built-in holds, or a row with no files, still is.
+	if _, err := os.Stat(m.pluginDir(man.ID)); err == nil {
+		return m.upgrade(ctx, man, manifestRaw, module, signatureRaw, icon, source, signedBy)
+	}
 	if err := m.checkDuplicate(man.ID); err != nil {
 		return Installed{}, err
 	}
 
-	// Staged inside the plugins directory so the rename into place is on one
-	// filesystem, and dot-prefixed so Load skips it if anything interrupts us.
-	if err := os.MkdirAll(m.dir, 0o755); err != nil {
-		return Installed{}, fmt.Errorf("plugins: preparing %s: %w", m.dir, err)
+	staging, staged, err := m.stage(ctx, man, manifestRaw, module, signatureRaw, icon)
+	if staging != "" {
+		defer os.RemoveAll(staging)
 	}
-	staging := filepath.Join(m.dir, fmt.Sprintf(".install-%d-%d", os.Getpid(), m.staging.Add(1)))
-	if err := os.MkdirAll(filepath.Join(staging, man.ID), 0o755); err != nil {
-		return Installed{}, fmt.Errorf("plugins: preparing to install %s: %w", man.ID, err)
-	}
-	defer os.RemoveAll(staging)
-
-	staged := filepath.Join(staging, man.ID)
-	// The manifest is written as the author shipped it, byte for byte, and never
-	// re-encoded. A re-encoded document is a different document, and a signature
-	// over it (issue 15) would stop verifying for no reason anybody could see.
-	if err := os.WriteFile(filepath.Join(staged, ManifestFile), manifestRaw, 0o644); err != nil {
-		return Installed{}, fmt.Errorf("plugins: writing the manifest for %s: %w", man.ID, err)
-	}
-	if err := os.WriteFile(filepath.Join(staged, moduleFile(man)), module, 0o644); err != nil {
-		return Installed{}, fmt.Errorf("plugins: writing the module for %s: %w", man.ID, err)
-	}
-	// The signature goes in beside them, byte for byte, whenever one arrived —
-	// verified or not. It is provenance: an operator who pins a key next month can
-	// check what they already have without fetching it again. The FILE is never the
-	// claim that anything was verified; the row's publisher column is.
-	if err := writeSignature(staged, signatureRaw); err != nil {
+	if err != nil {
 		return Installed{}, err
-	}
-	// The icon, when the package carried one, is the source's tile image; it is
-	// served from here and from nowhere else.
-	if len(icon) > 0 {
-		if err := os.WriteFile(filepath.Join(staged, IconFile), icon, 0o644); err != nil {
-			return Installed{}, fmt.Errorf("plugins: writing the icon for %s: %w", man.ID, err)
-		}
-	}
-
-	// COMPILE IT WHERE IT CANNOT BE FOUND. loadOne does everything boot does —
-	// reads the manifest again from the file, checks the id against the directory,
-	// compiles, checks the imports, builds the sandbox — and a Plugin that fails
-	// any of it comes back disabled with the sentence that says why. Doing it here
-	// is what makes "a module that fails to instantiate" a refusal rather than a
-	// Plugin permanently listed as broken.
-	probe := loadOne(ctx, staged, man.ID, m.loader)
-	probeStatus := probe.Status()
-	probe.close(ctx)
-	if probeStatus.Disabled {
-		return Installed{}, refuse(ReasonModule, "%s", probeStatus.LastError)
 	}
 
 	if err := os.Rename(staged, m.pluginDir(man.ID)); err != nil {
@@ -905,6 +877,60 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	}
 	m.logf("obelo: plugin %s (%s %s) was installed from %s", man.ID, man.Name, man.Version, source)
 	return m.view(ctx, man.ID)
+}
+
+// stage writes a package into a dot-prefixed directory inside the plugins folder
+// (so the rename into place is on one filesystem and Load skips it if anything
+// interrupts us) and COMPILES THE MODULE THERE, where it cannot be found. It returns
+// the staging root, which the caller removes, and the staged plugin directory. A
+// non-empty staging comes back even with an error so the caller can clean up.
+//
+// loadOne does everything boot does — reads the manifest again from the file, checks
+// the id against the directory, compiles, checks the imports, builds the sandbox —
+// and a Plugin that fails any of it comes back disabled with the sentence that says
+// why. Doing it here is what makes "a module that fails to instantiate" a refusal
+// rather than a Plugin permanently listed as broken.
+func (m *Manager) stage(ctx context.Context, man pluginapi.Manifest, manifestRaw, module, signatureRaw, icon []byte) (staging, staged string, err error) {
+	if err := os.MkdirAll(m.dir, 0o755); err != nil {
+		return "", "", fmt.Errorf("plugins: preparing %s: %w", m.dir, err)
+	}
+	staging = filepath.Join(m.dir, fmt.Sprintf(".install-%d-%d", os.Getpid(), m.staging.Add(1)))
+	if err := os.MkdirAll(filepath.Join(staging, man.ID), 0o755); err != nil {
+		return staging, "", fmt.Errorf("plugins: preparing to install %s: %w", man.ID, err)
+	}
+
+	staged = filepath.Join(staging, man.ID)
+	// The manifest is written as the author shipped it, byte for byte, and never
+	// re-encoded. A re-encoded document is a different document, and a signature
+	// over it (issue 15) would stop verifying for no reason anybody could see.
+	if err := os.WriteFile(filepath.Join(staged, ManifestFile), manifestRaw, 0o644); err != nil {
+		return staging, "", fmt.Errorf("plugins: writing the manifest for %s: %w", man.ID, err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, moduleFile(man)), module, 0o644); err != nil {
+		return staging, "", fmt.Errorf("plugins: writing the module for %s: %w", man.ID, err)
+	}
+	// The signature goes in beside them, byte for byte, whenever one arrived —
+	// verified or not. It is provenance: an operator who pins a key next month can
+	// check what they already have without fetching it again. The FILE is never the
+	// claim that anything was verified; the row's publisher column is.
+	if err := writeSignature(staged, signatureRaw); err != nil {
+		return staging, "", err
+	}
+	// The icon, when the package carried one, is the source's tile image; it is
+	// served from here and from nowhere else.
+	if len(icon) > 0 {
+		if err := os.WriteFile(filepath.Join(staged, IconFile), icon, 0o644); err != nil {
+			return staging, "", fmt.Errorf("plugins: writing the icon for %s: %w", man.ID, err)
+		}
+	}
+
+	probe := loadOne(ctx, staged, man.ID, m.loader)
+	probeStatus := probe.Status()
+	probe.close(ctx)
+	if probeStatus.Disabled {
+		return staging, "", refuse(ReasonModule, "%s", probeStatus.LastError)
+	}
+	return staging, staged, nil
 }
 
 // --- Refusals ------------------------------------------------------------------

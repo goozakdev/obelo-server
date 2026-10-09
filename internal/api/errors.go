@@ -363,6 +363,24 @@ const (
 	codePluginInvalidSettings = "PLUGIN_INVALID_SETTINGS"
 	codePluginSignature       = "PLUGIN_SIGNATURE"
 
+	// An upload over an Installed id is an in-place upgrade (ADR-0069), and when it is
+	// refused it is refused as one of three things, all 409 because the server's state
+	// is what refuses a well-formed request:
+	//
+	//   codePluginUpgradeVersion — the new version is not strictly higher semver, or
+	//                          one side is not semver.
+	//   codePluginUpgradePublisher — the package is not signed by the key the installed
+	//                          copy was first installed with (or the Obelo key, for a
+	//                          Bundled plugin). Its message names both publishers and
+	//                          both key ids, and says there is no key rotation.
+	//   codePluginUpgradeNeedsConfirmation — the upgrade could be applied only after an
+	//                          Admin has seen what changes: an author that cannot be
+	//                          confirmed, something widened or removed, a settings
+	//                          schema that no longer lines up.
+	codePluginUpgradeVersion           = "PLUGIN_UPGRADE_VERSION"
+	codePluginUpgradePublisher         = "PLUGIN_UPGRADE_PUBLISHER"
+	codePluginUpgradeNeedsConfirmation = "PLUGIN_UPGRADE_NEEDS_CONFIRMATION"
+
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the
 	// Library's kind — unknown, artwork-only, wrong-kind, or not yet keyed (ADR-0027).

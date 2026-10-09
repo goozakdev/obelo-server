@@ -435,8 +435,13 @@ func readUploadPart(w http.ResponseWriter, r *http.Request, name string, limit i
 }
 
 // writePluginInstalled answers a successful install with 201 and the whole list,
-// so the screen re-renders from one response.
+// so the screen re-renders from one response. An in-place upgrade created nothing, so
+// it answers 200 with the plugin itself and its `upgrade` summary (ADR-0069).
 func writePluginInstalled(w http.ResponseWriter, r *http.Request, deps Deps, installed plugins.Installed) {
+	if installed.Upgrade != nil {
+		writeJSON(w, http.StatusOK, installed)
+		return
+	}
 	list, err := deps.PluginManager.List(r.Context())
 	if err != nil {
 		// The Plugin IS installed at this point, so the honest answer is the one
@@ -496,6 +501,12 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 		// 409, not 422: the request is well-formed and the server's state is what
 		// refuses it, which is exactly what a conflict is.
 		status, code = http.StatusConflict, codePluginDuplicate
+	case plugins.ReasonVersion:
+		status, code = http.StatusConflict, codePluginUpgradeVersion
+	case plugins.ReasonPublisher:
+		status, code = http.StatusConflict, codePluginUpgradePublisher
+	case plugins.ReasonNeedsConfirmation:
+		status, code = http.StatusConflict, codePluginUpgradeNeedsConfirmation
 	case plugins.ReasonPackage:
 		code = codePluginInvalidPackage
 	case plugins.ReasonModule:

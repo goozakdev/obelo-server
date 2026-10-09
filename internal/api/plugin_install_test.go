@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
+	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	"github.com/goozakdev/obelo-server/internal/testharness"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -380,10 +382,12 @@ func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
 			wantIn:     "upgrade the plugin",
 		},
 		{
-			name:       "an id another plugin already has",
+			// Since ADR-0069 an Installed id is an upgrade candidate, and the same version
+			// is a version problem rather than a duplicate.
+			name:       "an id another plugin already has at the same version",
 			manifest:   plugintest.ManifestJSON(t, plugintest.SinkManifest("example-sink")),
 			wantStatus: http.StatusConflict,
-			wantCode:   "PLUGIN_DUPLICATE",
+			wantCode:   "PLUGIN_UPGRADE_VERSION",
 			wantIn:     "example-sink",
 		},
 		{
@@ -430,6 +434,98 @@ func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
 	}
 	if names := notShippedDirs(entries); len(names) != 1 || names[0] != "example-sink" {
 		t.Fatalf("the plugins directory holds %v, want just the one that installed", names)
+	}
+}
+
+// signedPackage packs the suite's guest at a version, signed by priv.
+func signedPackage(t *testing.T, id, version string, priv ed25519.PrivateKey) []byte {
+	t.Helper()
+	m := plugintest.SinkManifest(id)
+	m.Version = version
+	manifest := plugintest.ManifestJSON(t, m)
+	module := plugintest.Guest(t)
+	sig, err := signing.Sign(priv, "Example Publisher", manifest, module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := signing.Encode(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plugintest.PackageZip(t, manifest, module, doc)
+}
+
+// TestUploadingANewerVersionUpgradesInPlaceAndAnswers200WithTheSummary: nothing was
+// created, so it is a 200 and not the 201 a fresh install answers, and the answer is
+// the plugin with an `upgrade` summary.
+func TestUploadingANewerVersionUpgradesInPlaceAndAnswers200WithTheSummary(t *testing.T) {
+	t.Parallel()
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	_, priv, err := signing.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body := uploadPackage(t, srv, token, signedPackage(t, "up-sink", "1.0.0", priv))
+	if status != http.StatusCreated {
+		t.Fatalf("first install status = %d, want 201; body: %s", status, body)
+	}
+
+	status, body = uploadPackage(t, srv, token, signedPackage(t, "up-sink", "1.1.0", priv))
+	if status != http.StatusOK {
+		t.Fatalf("upgrade status = %d, want 200; body: %s", status, body)
+	}
+	var got struct {
+		installedPluginResp
+		Upgrade struct {
+			From             string `json:"from"`
+			To               string `json:"to"`
+			Publisher        string `json:"publisher"`
+			ClaimedPublisher string `json:"claimedPublisher"`
+			KeyID            string `json:"keyId"`
+		} `json:"upgrade"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("the upgrade answer is not a plugin view: %v\nbody: %s", err, body)
+	}
+	if got.ID != "up-sink" || got.Version != "1.1.0" || got.Upgrade.From != "1.0.0" || got.Upgrade.To != "1.1.0" ||
+		got.Upgrade.Publisher != "" || got.Upgrade.ClaimedPublisher != "Example Publisher" || got.Upgrade.KeyID == "" {
+		t.Fatalf("answer = %+v, want up-sink 1.1.0 with a 1.0.0 -> 1.1.0 summary whose publisher is only claimed (unpinned)", got)
+	}
+	if v := pluginNamed(t, readPlugins(t, srv, token), "up-sink").Version; v != "1.1.0" {
+		t.Fatalf("the Plugins screen lists version %q, want 1.1.0", v)
+	}
+}
+
+// TestEachUpgradeRefusalIsItsOwnCode: three things to do differently, three codes.
+func TestEachUpgradeRefusalIsItsOwnCode(t *testing.T) {
+	t.Parallel()
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	_, priv, _ := signing.GenerateKey()
+	_, other, _ := signing.GenerateKey()
+	if status, body := uploadPackage(t, srv, token, signedPackage(t, "up-sink", "1.0.0", priv)); status != http.StatusCreated {
+		t.Fatalf("first install status = %d; body: %s", status, body)
+	}
+	installGuestPlugin(t, srv, token, "plain-sink") // unsigned: no key to continue
+
+	for _, tc := range []struct {
+		name     string
+		archive  []byte
+		wantCode string
+		wantIn   string
+	}{
+		{"the same version", signedPackage(t, "up-sink", "1.0.0", priv), "PLUGIN_UPGRADE_VERSION", "not newer"},
+		{"another key", signedPackage(t, "up-sink", "1.1.0", other), "PLUGIN_UPGRADE_PUBLISHER", "no key rotation"},
+		{"nothing to continue", signedPackage(t, "plain-sink", "1.1.0", priv), "PLUGIN_UPGRADE_NEEDS_CONFIRMATION", "author cannot be confirmed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := uploadPackage(t, srv, token, tc.archive)
+			refusal := refusalOf(t, http.StatusConflict, status, body)
+			if refusal.Error.Code != tc.wantCode || !strings.Contains(refusal.Error.Message, tc.wantIn) {
+				t.Fatalf("got %s %q, want %s containing %q", refusal.Error.Code, refusal.Error.Message, tc.wantCode, tc.wantIn)
+			}
+		})
 	}
 }
 

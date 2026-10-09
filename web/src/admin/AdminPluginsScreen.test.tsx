@@ -202,6 +202,71 @@ describe("the Plugins screen", () => {
     await screen.findByTestId("plugin-example-sink");
   });
 
+  // An in-place upgrade answers 200 with the one plugin and a summary, not the list
+  // (ADR-0069): the screen must refetch the list instead of reading `plugins` off it.
+  it("takes an upgrade answer by refetching the list and says what was upgraded", async () => {
+    client.getPlugins
+      .mockResolvedValueOnce(view(plugin({ version: "1.0.0" })))
+      .mockResolvedValueOnce(view(plugin({ version: "1.1.0" })));
+    client.installPlugin.mockResolvedValue({
+      ...plugin({ version: "1.1.0" }),
+      upgrade: { from: "1.0.0", to: "1.1.0", publisher: "Example Publisher" },
+    });
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugin-example-sink");
+    const pkg = new File([new Uint8Array([80, 75, 3, 4])], "p.zip", { type: "application/zip" });
+    await userEvent.upload(screen.getByTestId("plugin-package-file"), pkg);
+    await userEvent.click(screen.getByTestId("plugin-upload"));
+
+    expect((await screen.findByTestId("plugins-notice")).textContent).toContain(
+      "Upgraded Example Sink from 1.0.0 to 1.1.0.",
+    );
+    expect(screen.getByTestId("plugin-version-example-sink").textContent).toContain("1.1.0");
+    expect(client.getPlugins).toHaveBeenCalledTimes(2);
+  });
+
+  it("takes an upgrade answer on the pasted-URL route by refetching the list", async () => {
+    client.getPlugins
+      .mockResolvedValueOnce(view(plugin({ version: "1.0.0" })))
+      .mockResolvedValueOnce(view(plugin({ version: "1.1.0" })));
+    client.installPluginFromURL.mockResolvedValue({
+      ...plugin({ version: "1.1.0" }),
+      upgrade: { from: "1.0.0", to: "1.1.0" },
+    });
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugin-example-sink");
+    await userEvent.type(screen.getByTestId("plugin-url"), "https://x.test/p.zip");
+    await userEvent.click(screen.getByTestId("plugin-install-from-url"));
+
+    expect((await screen.findByTestId("plugins-notice")).textContent).toContain(
+      "Upgraded Example Sink from 1.0.0 to 1.1.0.",
+    );
+    expect(screen.getByTestId("plugin-version-example-sink").textContent).toContain("1.1.0");
+  });
+
+  it("still says the upgrade happened when the refetch afterwards fails", async () => {
+    client.getPlugins
+      .mockResolvedValueOnce(view(plugin({ version: "1.0.0" })))
+      .mockRejectedValueOnce(new Error("network down"));
+    client.installPlugin.mockResolvedValue({
+      ...plugin({ version: "1.1.0" }),
+      upgrade: { from: "1.0.0", to: "1.1.0" },
+    });
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugin-example-sink");
+    const pkg = new File([new Uint8Array([80, 75, 3, 4])], "p.zip", { type: "application/zip" });
+    await userEvent.upload(screen.getByTestId("plugin-package-file"), pkg);
+    await userEvent.click(screen.getByTestId("plugin-upload"));
+
+    const notice = (await screen.findByTestId("plugins-notice")).textContent ?? "";
+    expect(notice).toContain("Upgraded Example Sink from 1.0.0 to 1.1.0.");
+    expect(notice).toContain("Refresh");
+    expect(screen.queryByTestId("plugins-action-error")).toBeNull();
+  });
+
   it("refuses to upload without a package", async () => {
     client.getPlugins.mockResolvedValue(view());
 

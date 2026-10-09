@@ -425,7 +425,7 @@ func (s *assertStore) UpdatePluginManifest(p store.PluginInsert) error {
 	s.updates++
 	s.updatesOf[p.ID]++
 	row := s.rows[p.ID]
-	row.Name, row.Version, row.APIVersion, row.Provides = p.Name, p.Version, p.APIVersion, p.Provides
+	row.Name, row.Version, row.APIVersion, row.Provides, row.Source = p.Name, p.Version, p.APIVersion, p.Provides, p.Source
 	s.rows[p.ID] = row
 	return nil
 }

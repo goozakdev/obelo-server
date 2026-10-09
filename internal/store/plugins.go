@@ -69,6 +69,55 @@ type PluginInsert struct {
 	Origin string
 }
 
+// PluginUpgrade is the facts an in-place upgrade replaces on an existing row
+// (ADR-0069): the four copied out of the new manifest, where the package came from,
+// who owns the row now, and the signer. Publisher and KeyID are the pinned-
+// verification record and are empty unless a pinned key verified THIS package; the
+// previous version's are always overwritten, so the API's publisher never shows them.
+type PluginUpgrade struct {
+	ID          string
+	Name        string
+	Version     string
+	APIVersion  int
+	Provides    []string
+	Source      string
+	Origin      string
+	Publisher   string
+	KeyID       string
+	SignerName  string
+	SignerKey   string
+	SignerKeyID string
+}
+
+// UpgradePlugin replaces an existing row's manifest facts, provenance, origin and
+// signer in one statement. It touches nothing else: the settings, the Admin's
+// enable switch, the install time and every per-Library reference belong to the
+// plugin that is still there. It fails when there is no such row, because an upgrade
+// of nothing is a bug in the caller.
+func (db *DB) UpgradePlugin(p PluginUpgrade) error {
+	provides, err := json.Marshal(nonNilProvides(p.Provides))
+	if err != nil {
+		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
+	}
+	res, err := db.Exec(
+		`UPDATE plugins SET name = ?, version = ?, api_version = ?, provides = ?, source = ?, origin = ?,
+		        publisher = ?, key_id = ?, signer_name = ?, signer_key = ?, signer_key_id = ?, last_error = NULL
+		  WHERE id = ?`,
+		p.Name, p.Version, p.APIVersion, string(provides), p.Source, p.Origin,
+		p.Publisher, p.KeyID, p.SignerName, p.SignerKey, p.SignerKeyID, p.ID)
+	if err != nil {
+		return fmt.Errorf("store: upgrading plugin %q: %w", p.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: upgrading plugin %q: %w", p.ID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("store: upgrading plugin %q: there is no such row", p.ID)
+	}
+	return nil
+}
+
 // Plugins lists every Installed plugin row, ordered by id — the same order the
 // loader walks the directory in, so the screen and the log agree.
 func (db *DB) Plugins() ([]PluginRow, error) {
@@ -178,7 +227,8 @@ func (db *DB) InsertPlugin(p PluginInsert) error {
 // same, so the settings row, the per-Library overrides, the item pins, the Admin's
 // enable switch, the install time and the origin all belong to the plugin that is
 // still there; what changed is the four facts copied out of the manifest at
-// install time, and leaving them stale would make the Plugins screen name the
+// install time (and the source, which a shipped copy replacing an Admin's upgrade of
+// it must set back to the shipped marker), and leaving them stale would make the Plugins screen name the
 // version that is no longer on disk.
 func (db *DB) UpdatePluginManifest(p PluginInsert) error {
 	provides, err := json.Marshal(nonNilProvides(p.Provides))
@@ -186,9 +236,9 @@ func (db *DB) UpdatePluginManifest(p PluginInsert) error {
 		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
 	}
 	_, err = db.Exec(
-		`UPDATE plugins SET name = ?, version = ?, api_version = ?, provides = ?, last_error = NULL
+		`UPDATE plugins SET name = ?, version = ?, api_version = ?, provides = ?, source = ?, last_error = NULL
 		  WHERE id = ?`,
-		p.Name, p.Version, p.APIVersion, string(provides), p.ID)
+		p.Name, p.Version, p.APIVersion, string(provides), p.Source, p.ID)
 	if err != nil {
 		return fmt.Errorf("store: updating plugin %q: %w", p.ID, err)
 	}
