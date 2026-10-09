@@ -16,10 +16,6 @@ func MigrateSettings(old, next []pluginapi.SettingsField, stored []store.PluginS
 	return mig.rows, mig.report
 }
 
-// SetAllowSettingLossForTest lets an upgrade apply while it drops or deletes a
-// setting. Until the preview (issue 06) exists nothing outside a test may.
-func (m *Manager) SetAllowSettingLossForTest(allow bool) { m.allowSettingLoss = allow }
-
 // ResolveAs is resolveAs for the external test package: every name the
 // private-address check asks about resolves to addr for the rest of the test.
 func ResolveAs(t *testing.T, addr string) { resolveAs(t, addr) }

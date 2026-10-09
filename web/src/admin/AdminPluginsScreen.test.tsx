@@ -267,6 +267,30 @@ describe("the Plugins screen", () => {
     expect(screen.queryByTestId("plugins-action-error")).toBeNull();
   });
 
+  // An upgrade that widens, loses a setting or has an unconfirmed author answers 202
+  // with a preview instead (ADR-0069): the screen must not read it as an applied upgrade.
+  it("does not read a staged-upgrade preview as an applied upgrade", async () => {
+    client.getPlugins.mockResolvedValue(view(plugin({ version: "1.0.0" })));
+    client.installPlugin.mockResolvedValue({
+      staged: "tok",
+      expiresAt: "2026-10-08T12:10:00Z",
+      preview: { from: "1.0.0", to: "1.1.0", authorUnconfirmed: false, hostsAdded: ["api.example.test"] },
+    });
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugin-example-sink");
+    const pkg = new File([new Uint8Array([80, 75, 3, 4])], "p.zip", { type: "application/zip" });
+    await userEvent.upload(screen.getByTestId("plugin-package-file"), pkg);
+    await userEvent.click(screen.getByTestId("plugin-upload"));
+
+    const notice = (await screen.findByTestId("plugins-notice")).textContent ?? "";
+    expect(notice).toContain("1.0.0 to 1.1.0");
+    expect(notice).toContain("needs confirmation");
+    expect(notice).not.toContain("Upgraded");
+    expect(screen.queryByTestId("plugins-action-error")).toBeNull();
+    expect(screen.getByTestId("plugin-version-example-sink").textContent).toContain("1.0.0");
+  });
+
   it("refuses to upload without a package", async () => {
     client.getPlugins.mockResolvedValue(view());
 

@@ -364,8 +364,8 @@ const (
 	codePluginSignature       = "PLUGIN_SIGNATURE"
 
 	// An upload over an Installed id is an in-place upgrade (ADR-0069), and when it is
-	// refused it is refused as one of three things, all 409 because the server's state
-	// is what refuses a well-formed request:
+	// refused it is refused as one of these, all 409 because the server's state is what
+	// refuses a well-formed request:
 	//
 	//   codePluginUpgradeVersion — the new version is not strictly higher semver, or
 	//                          one side is not semver.
@@ -373,17 +373,17 @@ const (
 	//                          copy was first installed with (or the Obelo key, for a
 	//                          Bundled plugin). Its message names both publishers and
 	//                          both key ids, and says there is no key rotation.
-	//   codePluginUpgradeNeedsConfirmation — the upgrade could be applied only after an
-	//                          Admin has seen what changes: an author that cannot be
-	//                          confirmed, something widened or removed, a settings
-	//                          schema that no longer lines up.
-	codePluginUpgradeVersion           = "PLUGIN_UPGRADE_VERSION"
-	codePluginUpgradePublisher         = "PLUGIN_UPGRADE_PUBLISHER"
-	codePluginUpgradeNeedsConfirmation = "PLUGIN_UPGRADE_NEEDS_CONFIRMATION"
-	// codePluginUpgradeDependents (409) — the new version drops an extension point other
-	// records depend on (Sign-in identities and Users, Online source grants). The
-	// counts are in details; uninstalling is the way to remove it.
+	//   codePluginUpgradeDependents — the new version drops an extension point other
+	//                          records depend on (Sign-in identities and Users, Online
+	//                          source grants). The counts are in details; uninstalling
+	//                          is the way to remove it.
+	//   codePluginUpgradeStaged — a confirmation named an upgrade that is not staged
+	//                          (cancelled, replaced, expired) or whose effect is no
+	//                          longer what the Admin was shown.
+	codePluginUpgradeVersion    = "PLUGIN_UPGRADE_VERSION"
+	codePluginUpgradePublisher  = "PLUGIN_UPGRADE_PUBLISHER"
 	codePluginUpgradeDependents = "PLUGIN_UPGRADE_DEPENDENTS"
+	codePluginUpgradeStaged     = "PLUGIN_UPGRADE_STAGED"
 
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the

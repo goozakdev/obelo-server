@@ -338,16 +338,21 @@ export default function AdminPluginsScreen() {
     return runAction(
       async () => {
         const got = await call();
-        if ("plugins" in got) return { list: got, upgraded: null };
+        if ("plugins" in got) return { list: got, upgraded: null, staged: null };
+        // Nothing has changed yet: the upgrade waits for a confirmation.
+        if ("staged" in got) return { list: null, upgraded: null, staged: got };
         // The upgrade HAS happened; a failed refetch must not read as if it had not.
         const list = await apiClient.getPlugins().catch(() => null);
-        return { list, upgraded: got };
+        return { list, upgraded: got, staged: null };
       },
       (r) => {
         if (r.list) setView(r.list);
       },
       (r) =>
-        r.upgraded
+        r.staged
+          ? `The upgrade from ${r.staged.preview.from} to ${r.staged.preview.to} needs confirmation and has not been applied. ` +
+            "The confirmation screen is not available yet."
+          : r.upgraded
           ? `Upgraded ${r.upgraded.name} from ${r.upgraded.upgrade.from} to ${r.upgraded.upgrade.to}.` +
             (r.list ? "" : " Refresh the page to see it.")
           : message,

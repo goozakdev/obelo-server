@@ -28,6 +28,8 @@ import (
 //	GET    /settings/plugins            → what is installed
 //	POST   /settings/plugins            → install a plugin package from an upload (multipart)
 //	POST   /settings/plugins/from-url   → install a plugin package from a pasted URL
+//	POST   /settings/plugins/{id}/upgrade → confirm a staged upgrade ({staged})
+//	DELETE /settings/plugins/{id}/upgrade?staged= → cancel a staged upgrade
 //	GET    /settings/plugins/catalog    → the operator's chosen index, if any
 //	PUT    /settings/plugins/catalog    → set or clear the catalog URL
 //	GET    /settings/plugins/publishers → the pinned publisher keys
@@ -60,6 +62,10 @@ type PluginManager interface {
 	List(ctx context.Context) ([]plugins.Installed, error)
 	InstallPackage(ctx context.Context, archive []byte, source string) (plugins.Installed, error)
 	InstallFromURL(ctx context.Context, url string) (plugins.Installed, error)
+	// ConfirmUpgrade and CancelUpgrade finish or abandon an upgrade an upload staged
+	// for an Admin's confirmation (ADR-0069).
+	ConfirmUpgrade(ctx context.Context, id, token string) (plugins.Installed, error)
+	CancelUpgrade(ctx context.Context, id, token string) error
 	SetEnabled(ctx context.Context, id string, enabled bool) (plugins.Installed, error)
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
 	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
@@ -115,6 +121,12 @@ type installFromURLRequest struct {
 // the API never returned can survive a save. An explicit null clears it.
 type pluginSettingsRequest struct {
 	Values map[string]json.RawMessage `json:"values"`
+}
+
+// confirmUpgradeRequest is the POST /settings/plugins/{id}/upgrade body: the token of
+// the staged upgrade. Nothing else is accepted, so what applies is what was staged.
+type confirmUpgradeRequest struct {
+	Staged string `json:"staged"`
 }
 
 // uninstallPluginRequest is the optional DELETE /settings/plugins/{id} body:
@@ -210,6 +222,16 @@ func handlePluginSettingsSubtree(deps Deps, rest string) http.HandlerFunc {
 				requireMethod(http.MethodPost, handleReenablePlugin(deps, id))(w, r)
 			case "reinstall-shipped":
 				requireMethod(http.MethodPost, handleReinstallShippedPlugin(deps, id))(w, r)
+			case "upgrade":
+				switch r.Method {
+				case http.MethodPost:
+					handleConfirmPluginUpgrade(deps, id)(w, r)
+				case http.MethodDelete:
+					handleCancelPluginUpgrade(deps, id)(w, r)
+				default:
+					w.Header().Set("Allow", "POST, DELETE")
+					writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed, "method not allowed", nil)
+				}
 			case "settings":
 				requireMethod(http.MethodPut, handleSavePluginSettings(deps, id))(w, r)
 			case "uninstall":
@@ -266,7 +288,7 @@ func handleInstallPlugin(deps Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		installed, err := deps.PluginManager.InstallPackage(r.Context(), archive, plugins.SourceUpload)
+		installed, err := deps.PluginManager.InstallPackage(adminContext(r), archive, plugins.SourceUpload)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
@@ -285,13 +307,50 @@ func handleInstallPluginFromURL(deps Deps) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		installed, err := deps.PluginManager.InstallFromURL(r.Context(), req.URL)
+		installed, err := deps.PluginManager.InstallFromURL(adminContext(r), req.URL)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
 		}
 		writePluginInstalled(w, r, deps, installed)
 	}
+}
+
+// handleConfirmPluginUpgrade applies the upgrade a body naming its token staged. Any
+// Admin may: the route is behind requireAdmin and the token is the only authority.
+func handleConfirmPluginUpgrade(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req confirmUpgradeRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		installed, err := deps.PluginManager.ConfirmUpgrade(adminContext(r), id, req.Staged)
+		if err != nil {
+			writePluginError(w, err, "failed to apply the staged upgrade")
+			return
+		}
+		writePluginInstalled(w, r, deps, installed)
+	}
+}
+
+// handleCancelPluginUpgrade discards a staged upgrade and answers with the list.
+func handleCancelPluginUpgrade(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := deps.PluginManager.CancelUpgrade(adminContext(r), id, r.URL.Query().Get("staged")); err != nil {
+			writePluginError(w, err, "failed to cancel the staged upgrade")
+			return
+		}
+		writePluginList(w, r, deps)
+	}
+}
+
+// adminContext is the request's context carrying the Admin's username, for the record
+// of who staged and who confirmed an upgrade.
+func adminContext(r *http.Request) context.Context {
+	if id, ok := identityFrom(r.Context()); ok {
+		return plugins.WithActor(r.Context(), id.User.Username)
+	}
+	return r.Context()
 }
 
 // --- Lifecycle --------------------------------------------------------------
@@ -436,8 +495,14 @@ func readUploadPart(w http.ResponseWriter, r *http.Request, name string, limit i
 
 // writePluginInstalled answers a successful install with 201 and the whole list,
 // so the screen re-renders from one response. An in-place upgrade created nothing, so
-// it answers 200 with the plugin itself and its `upgrade` summary (ADR-0069).
+// it answers 200 with the plugin itself and its `upgrade` summary (ADR-0069); one that
+// waits for an Admin answers 202 with the staged token and the preview.
 func writePluginInstalled(w http.ResponseWriter, r *http.Request, deps Deps, installed plugins.Installed) {
+	if installed.Staged != nil {
+		// Nothing changed yet: 202, and the preview the Admin confirms or cancels.
+		writeJSON(w, http.StatusAccepted, installed.Staged)
+		return
+	}
 	if installed.Upgrade != nil {
 		writeJSON(w, http.StatusOK, installed)
 		return
@@ -505,8 +570,8 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 		status, code = http.StatusConflict, codePluginUpgradeVersion
 	case plugins.ReasonPublisher:
 		status, code = http.StatusConflict, codePluginUpgradePublisher
-	case plugins.ReasonNeedsConfirmation:
-		status, code = http.StatusConflict, codePluginUpgradeNeedsConfirmation
+	case plugins.ReasonStaged:
+		status, code = http.StatusConflict, codePluginUpgradeStaged
 	case plugins.ReasonDependents:
 		status, code = http.StatusConflict, codePluginUpgradeDependents
 	case plugins.ReasonPackage:

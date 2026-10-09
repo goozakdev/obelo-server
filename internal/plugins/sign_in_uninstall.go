@@ -77,9 +77,15 @@ func (m *Manager) UninstallConfirming(ctx context.Context, id string, confirmed 
 	}
 	st, ok := m.store.(signInUninstallStore)
 	if !signIn || !ok {
-		return m.uninstall(ctx, id)
+		err = m.uninstall(ctx, id)
+	} else {
+		err = m.uninstallSignIn(ctx, id, others, confirmed, st)
 	}
-	return m.uninstallSignIn(ctx, id, others, confirmed, st)
+	if err == nil {
+		// A staged upgrade was made for the copy that is now gone.
+		delete(m.staged, id)
+	}
+	return err
 }
 
 // uninstallSignIn is uninstall for a Sign-in provider. The files go aside and

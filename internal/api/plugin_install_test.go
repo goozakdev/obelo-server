@@ -497,7 +497,7 @@ func TestUploadingANewerVersionUpgradesInPlaceAndAnswers200WithTheSummary(t *tes
 	}
 }
 
-// TestEachUpgradeRefusalIsItsOwnCode: three things to do differently, three codes.
+// TestEachUpgradeRefusalIsItsOwnCode: two things to do differently, two codes.
 func TestEachUpgradeRefusalIsItsOwnCode(t *testing.T) {
 	t.Parallel()
 	srv := testharness.New(t)
@@ -507,7 +507,6 @@ func TestEachUpgradeRefusalIsItsOwnCode(t *testing.T) {
 	if status, body := uploadPackage(t, srv, token, signedPackage(t, "up-sink", "1.0.0", priv)); status != http.StatusCreated {
 		t.Fatalf("first install status = %d; body: %s", status, body)
 	}
-	installGuestPlugin(t, srv, token, "plain-sink") // unsigned: no key to continue
 
 	for _, tc := range []struct {
 		name     string
@@ -517,7 +516,6 @@ func TestEachUpgradeRefusalIsItsOwnCode(t *testing.T) {
 	}{
 		{"the same version", signedPackage(t, "up-sink", "1.0.0", priv), "PLUGIN_UPGRADE_VERSION", "not newer"},
 		{"another key", signedPackage(t, "up-sink", "1.1.0", other), "PLUGIN_UPGRADE_PUBLISHER", "no key rotation"},
-		{"nothing to continue", signedPackage(t, "plain-sink", "1.1.0", priv), "PLUGIN_UPGRADE_NEEDS_CONFIRMATION", "author cannot be confirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := uploadPackage(t, srv, token, tc.archive)

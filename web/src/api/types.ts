@@ -2672,8 +2672,33 @@ export interface PluginUpgradeAnswer extends InstalledPlugin {
   };
 }
 
-/** The answer to an install: the full list (fresh install) or an upgrade summary. */
-export type InstallPluginAnswer = InstalledPluginsView | PluginUpgradeAnswer;
+/** What an install answers (202) when the upgrade waits for an Admin to confirm it
+ * (ADR-0069): nothing has changed yet, and `staged` is the token that confirms or
+ * cancels it before `expiresAt`. */
+export interface PluginUpgradeStaged {
+  staged: string;
+  expiresAt: string;
+  preview: {
+    from: string;
+    to: string;
+    publisher?: string;
+    claimedPublisher?: string;
+    keyId?: string;
+    /** True whenever the author cannot be confirmed; the screen must say so. */
+    authorUnconfirmed: boolean;
+    hostsAdded: string[];
+    hostsRemoved: string[];
+    extensionPointsAdded: string[];
+    extensionPointsRemoved: string[];
+    socketGrantAdded: boolean;
+    settingsDropped: { key: string; reason: string }[];
+    settingsDeleted: string[];
+  };
+}
+
+/** The answer to an install: the full list (fresh install), an upgrade summary, or a
+ * staged upgrade waiting for confirmation. */
+export type InstallPluginAnswer = InstalledPluginsView | PluginUpgradeAnswer | PluginUpgradeStaged;
 
 /** One User an uninstall of a Sign-in provider would delete. */
 export interface PluginUninstallUser {

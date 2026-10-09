@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -43,8 +44,11 @@ type settingsMigration struct {
 
 // migrateSettings decides, per stored row, whether the new manifest keeps it. old and
 // next are the declared fields of the installed and the offered version. A row is
-// kept only when both declare its key with the same type; a value is never coerced
-// into a new type. What was never stored, or is stale already, is not reported as lost.
+// kept only when both declare its key with the same type and the value still fits the
+// new definition (its options and bounds); a value is never coerced into a new type. A
+// row the installed version never declared is stale: it is left alone unless the new
+// version declares its key, when it is discarded and reported rather than revived with
+// a value nobody has seen for this setting. What was never stored is not reported.
 func migrateSettings(old, next []pluginapi.SettingsField, stored []store.PluginSetting) settingsMigration {
 	oldType := make(map[string]pluginapi.SettingsFieldType, len(old))
 	for _, f := range old {
@@ -62,15 +66,20 @@ func migrateSettings(old, next []pluginapi.SettingsField, stored []store.PluginS
 		nf, declared := nextField[row.Key]
 		ot, wasDeclared := oldType[row.Key]
 		switch {
+		case !wasDeclared && declared:
+			mig.report.Dropped = append(mig.report.Dropped, SettingDropped{
+				Key: row.Key, Reason: "a leftover value from before this setting was declared is not carried over"})
 		case !wasDeclared:
-			// A row the installed version never declared is stale already; this upgrade
-			// did not lose it, so it is neither judged nor reported.
+			// A row neither version declares is stale already; this upgrade did not lose
+			// it, so it is neither judged nor reported.
 			mig.rows = append(mig.rows, row)
 		case !declared:
 			mig.report.Deleted = append(mig.report.Deleted, row.Key)
 		case ot != nf.Type:
 			mig.report.Dropped = append(mig.report.Dropped, SettingDropped{
 				Key: row.Key, Reason: fmt.Sprintf("type changed from %s to %s", ot, nf.Type)})
+		case !valueFits(nf, row.Value):
+			mig.report.Dropped = append(mig.report.Dropped, SettingDropped{Key: row.Key, Reason: misfitReason(nf.Type)})
 		default:
 			mig.rows = append(mig.rows, row)
 			mig.report.Kept = append(mig.report.Kept, row.Key)
@@ -91,6 +100,25 @@ func migrateSettings(old, next []pluginapi.SettingsField, stored []store.PluginS
 	sort.Strings(mig.report.NeedsValue)
 	sort.Slice(mig.report.Dropped, func(i, j int) bool { return mig.report.Dropped[i].Key < mig.report.Dropped[j].Key })
 	return mig
+}
+
+// valueFits reports whether a stored value satisfies the field as the new version
+// declares it. The stored text is the field's own JSON.
+func valueFits(f pluginapi.SettingsField, stored string) bool {
+	_, err := decodeFieldValue(f, json.RawMessage(stored))
+	return err == nil
+}
+
+// misfitReason says why a stored value of an unchanged type no longer fits. It never
+// quotes the value: a secret's must not leave the database.
+func misfitReason(t pluginapi.SettingsFieldType) string {
+	switch t {
+	case pluginapi.FieldEnum, pluginapi.FieldMultiSelect:
+		return "the stored value is no longer one of the options"
+	case pluginapi.FieldInteger:
+		return "the stored value is outside the new bounds"
+	}
+	return "the stored value no longer satisfies the setting"
 }
 
 // lossy is true when applying the migration discards a stored value.

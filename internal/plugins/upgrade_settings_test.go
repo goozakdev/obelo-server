@@ -1,9 +1,11 @@
 package plugins_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -112,7 +114,6 @@ func TestMigrateSettingsReportsNothingLostForAKeyThatWasNeverStored(t *testing.T
 func TestAnAppliedUpgradeDeletesARemovedKeysRowAndDropsARetypedOne(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
-	f.manager.SetAllowSettingLossForTest(true)
 	_, priv := newKey(t)
 	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withFields(str("region"), str("gone"), str("port"))))
 	if err := f.store.ReplacePluginSettings("up-sink", []store.PluginSetting{
@@ -121,11 +122,8 @@ func TestAnAppliedUpgradeDeletesARemovedKeysRowAndDropsARetypedOne(t *testing.T)
 		t.Fatal(err)
 	}
 
-	got, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher,
+	got := applyConfirmed(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher,
 		withFields(str("region"), pluginapi.SettingsField{Key: "port", Type: pluginapi.FieldInteger})))
-	if err != nil {
-		t.Fatal(err)
-	}
 	after, _ := f.store.PluginSettings("up-sink")
 	if want := []store.PluginSetting{{Key: "region", Value: `"eu"`}}; !reflect.DeepEqual(after, want) {
 		t.Fatalf("settings after = %+v, want %+v", after, want)
@@ -137,7 +135,7 @@ func TestAnAppliedUpgradeDeletesARemovedKeysRowAndDropsARetypedOne(t *testing.T)
 	}
 }
 
-func TestWithoutConfirmationALossyUpgradeIsStillRefusedAndKeepsEverySetting(t *testing.T) {
+func TestWithoutConfirmationALossyUpgradeIsOnlyStagedAndKeepsEverySetting(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	_, priv := newKey(t)
@@ -146,12 +144,15 @@ func TestWithoutConfirmationALossyUpgradeIsStillRefusedAndKeepsEverySetting(t *t
 	if err := f.store.ReplacePluginSettings("up-sink", saved); err != nil {
 		t.Fatal(err)
 	}
-	_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, withFields(str("region"))))
-	if refusalReason(err) != plugins.ReasonNeedsConfirmation {
-		t.Fatalf("reason = %q (%v), want needs-confirmation", refusalReason(err), err)
+	s := staged(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, withFields(str("region"))))
+	if !reflect.DeepEqual(s.Preview.SettingsDeleted, []string{"gone"}) {
+		t.Fatalf("preview = %+v, want gone listed as deleted", s.Preview)
 	}
 	if after, _ := f.store.PluginSettings("up-sink"); !reflect.DeepEqual(after, saved) {
-		t.Fatalf("a refused upgrade changed settings: %+v", after)
+		t.Fatalf("a staged upgrade changed settings: %+v", after)
+	}
+	if v := rowOf(t, f, "up-sink").Version; v != "1.0.0" {
+		t.Fatalf("row version = %q, want it untouched until confirmed", v)
 	}
 }
 
@@ -172,7 +173,6 @@ func TestASecretsValueNeverAppearsInTheSummaryOrTheLog(t *testing.T) {
 	plugins.Parallel(t)
 	var logs lockedBuf
 	f := newManagerFixtureWith(t, func(c *plugins.ManagerConfig) { c.Logf = logs.logf })
-	f.manager.SetAllowSettingLossForTest(true)
 	_, priv := newKey(t)
 	secrets := func(keys ...string) []pluginapi.SettingsField {
 		var out []pluginapi.SettingsField
@@ -189,11 +189,8 @@ func TestASecretsValueNeverAppearsInTheSummaryOrTheLog(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher,
+	got := applyConfirmed(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher,
 		withFields(secrets("kept-key")[0], pluginapi.SettingsField{Key: "retyped-key", Type: pluginapi.FieldString})))
-	if err != nil {
-		t.Fatal(err)
-	}
 	body, _ := json.Marshal(got)
 	for name, text := range map[string]string{"response": string(body), "log": logs.String()} {
 		if strings.Contains(text, "s3cret-value-do-not-leak") {
@@ -208,7 +205,6 @@ func TestASecretsValueNeverAppearsInTheSummaryOrTheLog(t *testing.T) {
 func TestAFailedModuleCheckAfterTheSettingsDiffLeavesEverySettingRowUnchanged(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
-	f.manager.SetAllowSettingLossForTest(true)
 	_, priv := newKey(t)
 	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withFields(str("region"), str("gone"))))
 	saved := []store.PluginSetting{{Key: "gone", Value: `"x"`}, {Key: "region", Value: `"eu"`}}
@@ -240,7 +236,6 @@ func TestAFailedModuleCheckAfterTheSettingsDiffLeavesEverySettingRowUnchanged(t 
 func TestAFailedRowUpdateLeavesEverySettingRowUnchanged(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
-	f.manager.SetAllowSettingLossForTest(true)
 	_, priv := newKey(t)
 	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withFields(str("region"), str("gone"))))
 	saved := []store.PluginSetting{{Key: "gone", Value: `"x"`}, {Key: "region", Value: `"eu"`}}
@@ -248,10 +243,111 @@ func TestAFailedRowUpdateLeavesEverySettingRowUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.store.upgradeErr = errors.New("the disk is full")
-	if _, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, withFields(str("region")))); err == nil {
+	s := staged(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, withFields(str("region"))))
+	if _, err := f.manager.ConfirmUpgrade(context.Background(), "up-sink", s.Staged); err == nil {
 		t.Fatal("a failed row update reported success")
 	}
 	if after, _ := f.store.PluginSettings("up-sink"); !reflect.DeepEqual(after, saved) {
 		t.Fatalf("settings = %+v, want %+v", after, saved)
 	}
+}
+
+// --- Carry-overs from issue 04, closed by issue 06 -----------------------------
+
+func TestBootFinishingAnInterruptedUpgradeMigratesSettingsLikeANormalOne(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	_, priv := newKey(t)
+	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withFields(str("region"), str("gone"), str("port"))))
+	original := []store.PluginSetting{{Key: "gone", Value: `"x"`}, {Key: "port", Value: `"80"`}, {Key: "region", Value: `"eu"`}}
+	if err := f.store.ReplacePluginSettings("up-sink", original); err != nil {
+		t.Fatal(err)
+	}
+	copyDirForTest(t, filepath.Join(f.dir, "up-sink"), filepath.Join(f.dir, ".upgrade-up-sink-4242-1"))
+	applyConfirmed(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher,
+		withFields(str("region"), pluginapi.SettingsField{Key: "port", Type: pluginapi.FieldInteger})))
+	want, _ := f.store.PluginSettings("up-sink")
+	// Fault injection: the process died after the files were swapped and before the
+	// row and the settings were written.
+	r := f.store.rows["up-sink"]
+	r.Version = "1.0.0"
+	f.store.rows["up-sink"] = r
+	if err := f.store.ReplacePluginSettings("up-sink", original); err != nil {
+		t.Fatal(err)
+	}
+
+	recoverIn(t, f)
+
+	if got := rowOf(t, f, "up-sink").Version; got != "1.1.0" {
+		t.Fatalf("row version = %q, want the recovery to finish the upgrade (1.1.0)", got)
+	}
+	got, _ := f.store.PluginSettings("up-sink")
+	if !reflect.DeepEqual(got, want) || len(got) != 1 || got[0].Key != "region" {
+		t.Fatalf("settings after recovery = %+v, want exactly what a normal upgrade left: %+v", got, want)
+	}
+}
+
+func TestMigrateSettingsNeitherRevivesNorSilentlyDiscardsAnOrphanTheNewVersionRedeclares(t *testing.T) {
+	plugins.Parallel(t)
+	old := []pluginapi.SettingsField{str("region")}
+	next := []pluginapi.SettingsField{str("region"), {Key: "token", Type: pluginapi.FieldString, Required: true}}
+	// "token" was stored by a version older than the installed one and is stale.
+	stored := []store.PluginSetting{{Key: "region", Value: `"eu"`}, {Key: "token", Value: `"stale"`}}
+
+	rows, rep := plugins.MigrateSettings(old, next, stored)
+
+	if want := []store.PluginSetting{{Key: "region", Value: `"eu"`}}; !reflect.DeepEqual(rows, want) {
+		t.Fatalf("rows = %+v, want the stale value gone: %+v", rows, want)
+	}
+	if len(rep.Dropped) != 1 || rep.Dropped[0].Key != "token" || rep.Dropped[0].Reason == "" {
+		t.Fatalf("dropped = %+v, want the stale token reported with a reason", rep.Dropped)
+	}
+	if !reflect.DeepEqual(rep.NeedsValue, []string{"token"}) {
+		t.Fatalf("needsValue = %v, want token (required, no default, value discarded)", rep.NeedsValue)
+	}
+}
+
+func TestMigrateSettingsReportsANarrowedEnumOrBoundAsDroppedNotKept(t *testing.T) {
+	plugins.Parallel(t)
+	one, ten := 1, 10
+	three := 3
+	old := []pluginapi.SettingsField{
+		{Key: "tier", Type: pluginapi.FieldEnum, Options: []string{"a", "b", "c"}},
+		{Key: "tier-ok", Type: pluginapi.FieldEnum, Options: []string{"a", "b", "c"}},
+		{Key: "limit", Type: pluginapi.FieldInteger, Min: &one, Max: &ten},
+		{Key: "limit-ok", Type: pluginapi.FieldInteger, Min: &one, Max: &ten},
+		{Key: "tags", Type: pluginapi.FieldMultiSelect, Options: []string{"a", "b", "c"}},
+	}
+	next := []pluginapi.SettingsField{
+		{Key: "tier", Type: pluginapi.FieldEnum, Options: []string{"a", "b"}},
+		{Key: "tier-ok", Type: pluginapi.FieldEnum, Options: []string{"a", "b"}},
+		{Key: "limit", Type: pluginapi.FieldInteger, Min: &one, Max: &three},
+		{Key: "limit-ok", Type: pluginapi.FieldInteger, Min: &one, Max: &three},
+		{Key: "tags", Type: pluginapi.FieldMultiSelect, Options: []string{"a", "b"}},
+	}
+	stored := []store.PluginSetting{
+		{Key: "tier", Value: `"c"`}, {Key: "tier-ok", Value: `"a"`},
+		{Key: "limit", Value: `8`}, {Key: "limit-ok", Value: `2`},
+		{Key: "tags", Value: `["a","c"]`},
+	}
+
+	rows, rep := plugins.MigrateSettings(old, next, stored)
+
+	if got := droppedKeysForTest(rep.Dropped); !reflect.DeepEqual(got, []string{"limit", "tags", "tier"}) {
+		t.Fatalf("dropped = %v, want limit, tags and tier (their values no longer fit)", got)
+	}
+	if !reflect.DeepEqual(rep.Kept, []string{"limit-ok", "tier-ok"}) {
+		t.Fatalf("kept = %v, want only the values that still fit", rep.Kept)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want only the two that still fit", rows)
+	}
+}
+
+func droppedKeysForTest(d []plugins.SettingDropped) []string {
+	out := make([]string, 0, len(d))
+	for _, x := range d {
+		out = append(out, x.Key)
+	}
+	return out
 }

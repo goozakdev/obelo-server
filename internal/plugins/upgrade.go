@@ -14,18 +14,18 @@ import (
 )
 
 // In-place upgrade of an Installed plugin (ADR-0069, .scratch/plugin-inplace-upgrade
-// issue 03).
+// issues 03 and 06).
 //
 // An upload of a package whose id is already Installed is an UPGRADE when the new
-// version is strictly higher semver and the package is signed by the key the
-// installed copy was first installed with. The files are replaced where they stand,
-// the row is updated, and the settings, secrets and stored data stay, because the id
-// is the same plugin. Everything else is refused before a byte is written.
+// version is strictly higher semver and, where the installed copy recorded a signer's
+// key, the package is signed by that key. The files are replaced where they stand, the
+// row is updated, and the settings, secrets and stored data stay, because the id is the
+// same plugin. Everything else is refused before a byte is written.
 //
-// This first slice applies an upgrade in ONE step only: nothing widened, nothing
-// removed, every setting still the same shape, and a recorded key that verified.
-// Every other case is refused with a "needs confirmation" error naming the
-// difference; the preview-and-confirm flow replaces those refusals.
+// An upgrade that changes nothing an Admin has not already accepted applies in ONE
+// step. One that widens what the plugin may do, removes an extension point, loses a
+// stored setting, or comes from an author nobody can confirm is STAGED instead, with a
+// preview of what changes; an Admin confirms it (upgrade_stage.go) or it expires.
 
 // Reasons an upgrade was refused. They sit beside the install reasons and are not
 // ReasonDuplicate, which stays the answer for an id a Built-in holds.
@@ -36,9 +36,6 @@ const (
 	// ReasonPublisher: the package is not signed by the key the installed copy was
 	// first installed with (or, for a Bundled plugin, by the Obelo release key).
 	ReasonPublisher = "publisher"
-	// ReasonNeedsConfirmation: the upgrade could proceed only after an Admin has seen
-	// what changes (an author who cannot be confirmed, something widened or removed).
-	ReasonNeedsConfirmation = "needs-confirmation"
 	// ReasonDependents: the new version drops an extension point that other records
 	// depend on (Sign-in identities and Users, Online source grants), so applying it
 	// would orphan them. Uninstalling is the way to remove the extension point.
@@ -57,6 +54,11 @@ type UpgradeSummary struct {
 	KeyID            string `json:"keyId,omitempty"`
 	// Settings is what the upgrade did to the plugin's stored settings.
 	Settings SettingsReport `json:"settings"`
+	// StagedBy is who uploaded the package and ConfirmedBy who confirmed its preview
+	// (empty for an upgrade that applied in one step). Both are the Admins' usernames
+	// as the API gave them, or empty when the caller named nobody.
+	StagedBy    string `json:"stagedBy,omitempty"`
+	ConfirmedBy string `json:"confirmedBy,omitempty"`
 }
 
 // releaseKeyed is what a BundledSource built into a release implements: the Obelo
@@ -74,51 +76,98 @@ func (m *Manager) releaseKey() (name, publicKey string, release bool) {
 	return "", "", false
 }
 
+// uploadedPackage is one package's files as they arrived, with the provenance the row
+// will record.
+type uploadedPackage struct {
+	man                                     pluginapi.Manifest
+	manifestRaw, module, signatureRaw, icon []byte
+	source                                  string
+}
+
+// upgradePlan is what an upgrade would do, worked out and checked but not done.
+type upgradePlan struct {
+	old            pluginapi.Manifest
+	rec            recordedSigner
+	bundledRelease bool
+	mig            settingsMigration
+	preview        UpgradePreview
+	// confirm is true when an Admin must see the preview before this applies.
+	confirm bool
+}
+
 // upgrade is install's other half for an id whose directory already exists. Caller
 // holds mu, and checkSignature (the pinned-publisher policy) has already run.
-func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestRaw, module, signatureRaw, icon []byte,
-	source string, signedBy signer) (Installed, error) {
-	id := man.ID
+func (m *Manager) upgrade(ctx context.Context, up uploadedPackage, signedBy signer) (Installed, error) {
+	plan, err := m.planUpgrade(ctx, up, signedBy)
+	if err != nil {
+		return Installed{}, err
+	}
+	if plan.confirm {
+		return m.stageUpgrade(ctx, up, plan, actorOf(ctx))
+	}
+	return m.applyUpgrade(ctx, up, plan, signedBy, actorOf(ctx), "")
+}
+
+// planUpgrade runs every check an upgrade must pass, whether it applies at once or
+// waits for a confirmation, and works out what it would change. It writes nothing.
+// Caller holds mu.
+func (m *Manager) planUpgrade(ctx context.Context, up uploadedPackage, signedBy signer) (*upgradePlan, error) {
+	man, id := up.man, up.man.ID
 	old, err := readManifest(m.pluginDir(id))
 	if err != nil {
-		return Installed{}, refuse(ReasonDuplicate,
+		return nil, refuse(ReasonDuplicate,
 			"a plugin with the id %q is already installed and its manifest cannot be read (%v); uninstall it before installing another under the same id", id, err)
 	}
 	row, hasRow, err := m.rowOf(id)
 	if err != nil {
-		return Installed{}, err
+		return nil, err
+	}
+	if !hasRow && m.store != nil {
+		return nil, refuse(ReasonDuplicate,
+			"a plugin with the id %q is already installed without a record of where it came from; uninstall it before installing another under the same id", id)
 	}
 	if err := checkUpgradeVersion(id, old.Version, man.Version); err != nil {
-		return Installed{}, err
+		return nil, err
 	}
-	rec, bundledRelease, err := m.checkContinuity(row, hasRow, man, manifestRaw, module, signatureRaw, icon, signedBy)
+	rec, bundledRelease, unconfirmed, err := m.checkContinuity(row, hasRow, man, up.manifestRaw, up.module, up.signatureRaw, up.icon, signedBy)
 	if err != nil {
-		return Installed{}, err
+		return nil, err
 	}
 	if err := m.checkDroppedDependents(ctx, id, old, man); err != nil {
-		return Installed{}, err
+		return nil, err
 	}
-	diffs := upgradeDifferences(old, man)
 	var stored []store.PluginSetting
 	if m.store != nil {
 		if stored, err = m.store.PluginSettings(id); err != nil {
-			return Installed{}, err
+			return nil, err
 		}
 	}
 	mig := migrateSettings(settingsFields(old), settingsFields(man), stored)
-	if !m.allowSettingLoss {
-		// A schema that no longer lines up, or a value that would be lost, waits for
-		// the preview (issue 06).
-		diffs = append(diffs, settingsDifferences(old, man)...)
-	}
-	if len(diffs) > 0 {
-		return Installed{}, refuse(ReasonNeedsConfirmation,
-			"upgrading %s from %s to %s needs confirmation: %s. This server cannot yet apply an upgrade that changes what a plugin may do or the settings it keeps; "+
-				"uninstall the plugin and install the new version instead (its settings are not kept)",
-			id, old.Version, man.Version, strings.Join(diffs, "; "))
-	}
 
-	staging, staged, err := m.stage(ctx, man, manifestRaw, module, signatureRaw, icon)
+	preview := diffManifests(old, man)
+	preview.From, preview.To = old.Version, man.Version
+	preview.AuthorUnconfirmed = unconfirmed
+	preview.KeyID = rec.keyID
+	if signedBy.Publisher != "" || bundledRelease {
+		preview.Publisher = rec.name
+	} else {
+		preview.ClaimedPublisher = rec.name
+	}
+	preview.SettingsDropped, preview.SettingsDeleted = mig.report.Dropped, mig.report.Deleted
+	return &upgradePlan{
+		old: old, rec: rec, bundledRelease: bundledRelease, mig: mig, preview: preview,
+		confirm: unconfirmed || preview.widensOrRemoves() || mig.lossy(),
+	}, nil
+}
+
+// applyUpgrade swaps the files, writes the row and the settings, and rebuilds. The
+// package has been through planUpgrade under the same lock. Caller holds mu.
+func (m *Manager) applyUpgrade(ctx context.Context, up uploadedPackage, plan *upgradePlan, signedBy signer,
+	stagedBy, confirmedBy string) (Installed, error) {
+	man, id, old, rec, mig := up.man, up.man.ID, plan.old, plan.rec, plan.mig
+	bundledRelease := plan.bundledRelease
+
+	staging, staged, err := m.stage(ctx, man, up.manifestRaw, up.module, up.signatureRaw, up.icon)
 	if staging != "" {
 		defer os.RemoveAll(staging)
 	}
@@ -158,7 +207,7 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 			Version:    man.Version,
 			APIVersion: man.APIVersion,
 			Provides:   providesOf(man),
-			Source:     source,
+			Source:     up.source,
 			Origin:     origin,
 			// Only a pinned key that verified THIS package may fill these; whatever the
 			// previous version had is overwritten, so the API never shows it.
@@ -183,15 +232,19 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 	if rebuildErr != nil {
 		return Installed{}, rebuildErr
 	}
-	summary := &UpgradeSummary{From: old.Version, To: man.Version, KeyID: rec.keyID, Settings: mig.report}
+	summary := &UpgradeSummary{From: old.Version, To: man.Version, KeyID: rec.keyID, Settings: mig.report,
+		StagedBy: stagedBy, ConfirmedBy: confirmedBy}
 	if signedBy.Publisher != "" || bundledRelease {
 		summary.Publisher = rec.name
 		m.logf("obelo: plugin %s was upgraded from %s to %s (signed by %q, key id %s) from %s",
-			id, old.Version, man.Version, rec.name, rec.keyID, source)
+			id, old.Version, man.Version, rec.name, rec.keyID, up.source)
 	} else {
 		summary.ClaimedPublisher = rec.name
 		m.logf("obelo: plugin %s was upgraded from %s to %s (signed with key id %s, which claims to be %q) from %s",
-			id, old.Version, man.Version, rec.keyID, rec.name, source)
+			id, old.Version, man.Version, rec.keyID, rec.name, up.source)
+	}
+	if stagedBy != "" || confirmedBy != "" {
+		m.logf("obelo: plugin %s: the upgrade to %s was uploaded by %q and confirmed by %q", id, man.Version, stagedBy, confirmedBy)
 	}
 	// Keys and reasons only: a secret's value is never logged.
 	m.logf("obelo: plugin %s: settings on upgrade: %d kept, %d added, dropped %v, deleted %v, %d added need a value",
@@ -336,12 +389,27 @@ func recoverOne(dir, id, aside string, st ManagerStore, logf func(string, ...any
 		restore("the new files do not verify under the key the plugin was installed with")
 		return
 	}
+	// The settings are migrated exactly as a normal upgrade migrates them, which needs
+	// the version they were stored under: the aside copy. Without it nothing says what
+	// the Admin entered under which definition, so the new files are not adopted.
+	oldMan, err := readManifest(aside)
+	if err != nil || oldMan.Version != row.Version {
+		restore("the previous version is not there to migrate the settings from")
+		return
+	}
+	stored, err := st.PluginSettings(id)
+	if err != nil {
+		restore(fmt.Sprintf("the stored settings could not be read: %v", err))
+		return
+	}
+	mig := migrateSettings(settingsFields(oldMan), settingsFields(man), stored)
 	// Written as a normal upgrade writes it: the pinned columns only when a pinned key
 	// verifies these files, the recorded signer kept, the source an upload.
 	up := store.PluginUpgrade{
 		ID: id, Name: man.Name, Version: man.Version, APIVersion: man.APIVersion, Provides: providesOf(man),
 		Source: SourceUpload, Origin: row.Origin,
 		SignerName: row.SignerName, SignerKey: row.SignerKey, SignerKeyID: row.SignerKeyID,
+		ReplaceSettings: mig.lossy(), Settings: mig.rows,
 	}
 	up.Publisher, up.KeyID = pinnedOnDisk(live, man, st)
 	if err := st.UpgradePlugin(up); err != nil {
@@ -424,29 +492,30 @@ type recordedSigner struct{ name, key, keyID string }
 // is bound to. For a Bundled plugin on a release build that key is the compiled-in
 // Obelo release key, whether or not the row recorded it (a row from a release before
 // keys were recorded has none); otherwise it is the key recorded at first install. A
-// plugin with no key to continue is never upgraded in one step. bundledRelease is true
-// when the package verified under the Obelo key for a bundled-origin row, which is
-// what lets it keep its origin.
+// plugin with no key to continue is never upgraded in one step: unconfirmed comes back
+// true, rec is whatever the package itself was signed with (nothing if unsigned), and
+// the upgrade waits for an Admin who is told the author cannot be confirmed.
+// bundledRelease is true when the package verified under the Obelo key for a
+// bundled-origin row, which is what lets it keep its origin.
 func (m *Manager) checkContinuity(row store.PluginRow, hasRow bool, man pluginapi.Manifest, manifestRaw, module, signatureRaw, icon []byte,
-	signedBy signer) (rec recordedSigner, bundledRelease bool, err error) {
+	signedBy signer) (rec recordedSigner, bundledRelease, unconfirmed bool, err error) {
 	rec = recordedSigner{row.SignerName, row.SignerKey, row.SignerKeyID}
 	if relName, relKey, release := m.releaseKey(); hasRow && row.Origin == OriginBundled && release {
 		if relKey == "" {
-			return recordedSigner{}, false, refuse(ReasonPublisher,
+			return recordedSigner{}, false, false, refuse(ReasonPublisher,
 				"%s ships with Obelo, and the Obelo release key compiled into this build cannot be read, so no upload can be verified against it; "+
 					"uninstall the plugin and install the new version instead", man.ID)
 		}
 		rec, bundledRelease = recordedSigner{name: relName, key: relKey}, true
 	}
 	if rec.key == "" {
-		return recordedSigner{}, false, refuse(ReasonNeedsConfirmation,
-			"upgrading %s needs confirmation: the installed copy was not signed, or was installed before this server recorded signers, "+
-				"so the author cannot be confirmed. This server cannot yet apply an upgrade it cannot attribute; "+
-				"uninstall the plugin and install the new version instead (its settings are not kept)", man.ID)
+		// Nothing to continue: the installed copy was not signed, or was installed before
+		// this server recorded signers. Anything may upgrade it, and the Admin is told so.
+		return recordedSigner{signedBy.SignerName, signedBy.SignerKey, signedBy.SignerKeyID}, false, true, nil
 	}
 	expected, err := signing.ParsePublicKey(rec.key)
 	if err != nil {
-		return recordedSigner{}, false, refuse(ReasonPublisher,
+		return recordedSigner{}, false, false, refuse(ReasonPublisher,
 			"the signing key recorded for %s cannot be read (%v), so an upgrade cannot be verified against it; uninstall the plugin and install the new version instead", man.ID, err)
 	}
 	rec.keyID = signing.KeyID(expected)
@@ -465,17 +534,17 @@ func (m *Manager) checkContinuity(row store.PluginRow, hasRow bool, man pluginap
 		"To change publisher, uninstall the plugin and install the new one (its settings are not kept)."
 
 	if len(signatureRaw) == 0 {
-		return recordedSigner{}, false, refuse(ReasonPublisher,
+		return recordedSigner{}, false, false, refuse(ReasonPublisher,
 			"%s %s, but this package is not signed. %s", man.ID, who, tail)
 	}
 	sig, err := signing.Parse(signatureRaw)
 	if err != nil {
-		return recordedSigner{}, false, refuse(ReasonPublisher,
+		return recordedSigner{}, false, false, refuse(ReasonPublisher,
 			"%s %s, but the signature that came with this package could not be read: %v. %s", man.ID, who, err, tail)
 	}
 	verr := signing.VerifyWithIcon(sig, expected, manifestRaw, module, icon)
 	if verr == nil {
-		return rec, bundledRelease, nil
+		return rec, bundledRelease, false, nil
 	}
 
 	// Who the package says it is from. Stated as fact only when a pinned key
@@ -489,18 +558,18 @@ func (m *Manager) checkContinuity(row store.PluginRow, hasRow bool, man pluginap
 	}
 	if offeredID != "" && offeredID != rec.keyID {
 		if pinned {
-			return recordedSigner{}, false, refuse(ReasonPublisher,
+			return recordedSigner{}, false, false, refuse(ReasonPublisher,
 				"%s %s, but this package is signed by %q (key id %s). %s", man.ID, who, offered, offeredID, tail)
 		}
-		return recordedSigner{}, false, refuse(ReasonPublisher,
+		return recordedSigner{}, false, false, refuse(ReasonPublisher,
 			"%s %s, but this package is signed with key id %s (claims %q). %s", man.ID, who, offeredID, offered, tail)
 	}
 	if errors.Is(verr, signing.ErrDigestMismatch) {
-		return recordedSigner{}, false, refuse(ReasonPublisher,
+		return recordedSigner{}, false, false, refuse(ReasonPublisher,
 			"%s %s, but this package's signature covers different files than the ones that arrived — the manifest or the module has changed since it was signed. %s",
 			man.ID, who, tail)
 	}
-	return recordedSigner{}, false, refuse(ReasonPublisher,
+	return recordedSigner{}, false, false, refuse(ReasonPublisher,
 		"%s %s, but this package's signature does not verify under that key. %s", man.ID, who, tail)
 }
 
@@ -524,66 +593,54 @@ func checkUpgradeVersion(id, installed, offered string) error {
 	return nil
 }
 
-// upgradeDifferences lists what an upgrade widens or removes, which this slice will
-// not apply without confirmation. Settings are judged separately (settingsDifferences).
-func upgradeDifferences(old, next pluginapi.Manifest) []string {
-	var out []string
+// diffManifests is what the new manifest widens or removes against the installed one:
+// the hosts, extension points and socket grant, as the preview lists them.
+func diffManifests(old, next pluginapi.Manifest) UpgradePreview {
+	p := UpgradePreview{HostsAdded: []string{}, HostsRemoved: []string{},
+		ExtensionPointsAdded: []string{}, ExtensionPointsRemoved: []string{},
+		SettingsDropped: []SettingDropped{}, SettingsDeleted: []string{}}
 
-	oldHosts := map[string]bool{}
+	hostKey := func(h string) string { return strings.ToLower(strings.TrimSpace(h)) }
+	oldHosts, newHosts := map[string]bool{}, map[string]bool{}
 	for _, h := range old.Network.Hosts {
-		oldHosts[strings.ToLower(strings.TrimSpace(h))] = true
+		oldHosts[hostKey(h)] = true
 	}
 	for _, h := range next.Network.Hosts {
-		if !oldHosts[strings.ToLower(strings.TrimSpace(h))] {
-			out = append(out, fmt.Sprintf("it adds the network host %q", h))
+		if k := hostKey(h); !oldHosts[k] && !newHosts[k] {
+			p.HostsAdded = append(p.HostsAdded, h)
+		}
+		newHosts[hostKey(h)] = true
+	}
+	for _, h := range old.Network.Hosts {
+		if k := hostKey(h); !newHosts[k] {
+			p.HostsRemoved = append(p.HostsRemoved, h)
+			newHosts[k] = true
 		}
 	}
 
 	oldKinds, oldSocket := map[pluginapi.ExtensionPoint]bool{}, map[pluginapi.ExtensionPoint]bool{}
-	for _, p := range old.Provides {
-		oldKinds[p.Kind] = true
-		oldSocket[p.Kind] = oldSocket[p.Kind] || p.Socket
+	for _, e := range old.Provides {
+		oldKinds[e.Kind] = true
+		oldSocket[e.Kind] = oldSocket[e.Kind] || e.Socket
 	}
 	newKinds := map[pluginapi.ExtensionPoint]bool{}
-	for _, p := range next.Provides {
-		if !oldKinds[p.Kind] && !newKinds[p.Kind] {
-			out = append(out, fmt.Sprintf("it adds the %s extension point", p.Kind))
+	for _, e := range next.Provides {
+		if !oldKinds[e.Kind] && !newKinds[e.Kind] {
+			p.ExtensionPointsAdded = append(p.ExtensionPointsAdded, string(e.Kind))
 		}
-		newKinds[p.Kind] = true
-		if p.Socket && !oldSocket[p.Kind] {
-			out = append(out, fmt.Sprintf("it asks for the socket grant on the %s extension point", p.Kind))
-			oldSocket[p.Kind] = true
-		}
-	}
-	for _, p := range old.Provides {
-		if newKinds[p.Kind] {
-			continue
-		}
-		newKinds[p.Kind] = true
-		out = append(out, fmt.Sprintf("it removes the %s extension point", p.Kind))
-	}
-
-	return out
-}
-
-// settingsDifferences names every declared setting the new version removes or retypes,
-// whether or not a value is stored for it.
-func settingsDifferences(old, next pluginapi.Manifest) []string {
-	var out []string
-	nextTypes := map[string]pluginapi.SettingsFieldType{}
-	for _, f := range settingsFields(next) {
-		nextTypes[f.Key] = f.Type
-	}
-	for _, f := range settingsFields(old) {
-		typ, kept := nextTypes[f.Key]
-		switch {
-		case !kept:
-			out = append(out, fmt.Sprintf("it removes the setting %q", f.Key))
-		case typ != f.Type:
-			out = append(out, fmt.Sprintf("it changes the setting %q from %s to %s", f.Key, f.Type, typ))
+		newKinds[e.Kind] = true
+		if e.Socket && !oldSocket[e.Kind] {
+			p.SocketGrantAdded = true
 		}
 	}
-	return out
+	seen := map[pluginapi.ExtensionPoint]bool{}
+	for _, e := range old.Provides {
+		if !newKinds[e.Kind] && !seen[e.Kind] {
+			p.ExtensionPointsRemoved = append(p.ExtensionPointsRemoved, string(e.Kind))
+		}
+		seen[e.Kind] = true
+	}
+	return p
 }
 
 // dependentStateStore is the part of the store that counts what other records hold

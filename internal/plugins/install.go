@@ -92,6 +92,11 @@ const (
 	// signature, or a member is larger than this server will unpack. Its message
 	// always says what was found and what was expected.
 	ReasonPackage = "package"
+	// ReasonStaged: a staged upgrade cannot be confirmed — it is not there (cancelled,
+	// replaced, or never made), it expired, or what it would change is no longer what
+	// the Admin was shown (ADR-0069). Its message says which; the way forward is to
+	// upload the package again.
+	ReasonStaged = "staged"
 )
 
 // Refusal is an install this server would not perform. Message is written for the
@@ -187,6 +192,10 @@ type Installed struct {
 	// Upgrade is present ONLY on the answer to an install that was an in-place upgrade
 	// of a plugin already here (ADR-0069); a listing never carries it.
 	Upgrade *UpgradeSummary `json:"upgrade,omitempty"`
+	// Staged is present ONLY on the answer to an upload that waits for an Admin's
+	// confirmation: the plugin itself is still the installed version. Never serialised
+	// here; the API answers a staged upgrade with its own body.
+	Staged *StagedUpgrade `json:"-"`
 	// SettingsSchema is what this Plugin's manifest declares about its OWN settings
 	// (issue 13), straight from the file on disk: the ordered field list the web app
 	// renders a form from. Empty for a Plugin configured entirely through the fixed
@@ -294,6 +303,8 @@ type ManagerConfig struct {
 	// (an install, a boot-time replacement of a Bundled plugin, a switch or a removal), which may have replaced any of them.
 	// The Online source service clears its cached rows on it.
 	OnChange func(pluginID string)
+	// Now is the clock a staged upgrade's expiry is read from. Nil means time.Now.
+	Now func() time.Time
 	// Client fetches a pasted URL. Nil means safefetch.Client; whatever is passed
 	// is GUARDED, so the redirect policy cannot be wired away.
 	Client *http.Client
@@ -338,9 +349,10 @@ type Manager struct {
 	bundled  BundledSource
 	// onAside, set only by a test, hears the directory an upgrade moves the old files to.
 	onAside func(aside string)
-	// allowSettingLoss, set only by a test, lets an upgrade apply while it drops or
-	// deletes a stored setting; until the preview (issue 06) exists it never is.
-	allowSettingLoss bool
+	now     func() time.Time
+	// staged holds the upgrades waiting for an Admin's confirmation, by plugin id. It is
+	// guarded by mu and lives in memory only, so a restart forgets them (ADR-0069).
+	staged map[string]*stagedUpgrade
 
 	allowPrivateSources bool
 
@@ -368,7 +380,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 		client:              safefetch.Guard(cfg.Client),
 		logf:                cfg.Logf,
 		bundled:             cfg.Bundled,
+		now:                 cfg.Now,
+		staged:              map[string]*stagedUpgrade{},
 		allowPrivateSources: cfg.AllowPrivateSources,
+	}
+	if m.now == nil {
+		m.now = time.Now
 	}
 	if m.logf == nil {
 		m.logf = m.loader.Logf
@@ -832,7 +849,8 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	// An id an Installed plugin already holds is an upgrade candidate, not a
 	// duplicate (ADR-0069); an id a Built-in holds, or a row with no files, still is.
 	if _, err := os.Stat(m.pluginDir(man.ID)); err == nil {
-		return m.upgrade(ctx, man, manifestRaw, module, signatureRaw, icon, source, signedBy)
+		return m.upgrade(ctx, uploadedPackage{man: man, manifestRaw: manifestRaw, module: module,
+			signatureRaw: signatureRaw, icon: icon, source: source}, signedBy)
 	}
 	if err := m.checkDuplicate(man.ID); err != nil {
 		return Installed{}, err

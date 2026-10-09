@@ -336,43 +336,6 @@ func TestAnUpgradeSignedByADifferentPinnedKeyIsRefused(t *testing.T) {
 	assertUnchanged(t, f, "up-sink", before)
 }
 
-func TestAnUpgradeOfAPluginWithNoRecordedKeyNeedsConfirmation(t *testing.T) {
-	plugins.Parallel(t)
-	_, priv := newKey(t)
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, f *managerFixture)
-	}{
-		{"installed unsigned", func(t *testing.T, f *managerFixture) {
-			mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", nil, "", nil))
-		}},
-		{"a row that predates the recorded key", func(t *testing.T, f *managerFixture) {
-			mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, nil))
-			r := f.store.rows["up-sink"]
-			r.SignerName, r.SignerKey, r.SignerKeyID = "", "", ""
-			f.store.rows["up-sink"] = r
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newManagerFixture(t)
-			tc.setup(t, f)
-			before := takeSnapshot(t, f, "up-sink")
-
-			// Signed by anyone, or by no one: either way nobody can say who the author is.
-			for _, signer := range []ed25519.PrivateKey{priv, nil} {
-				_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", signer, upgradePublisher, nil))
-				if refusalReason(err) != plugins.ReasonNeedsConfirmation {
-					t.Fatalf("reason = %q (%v), want %q", refusalReason(err), err, plugins.ReasonNeedsConfirmation)
-				}
-				if !strings.Contains(err.Error(), "author cannot be confirmed") {
-					t.Fatalf("message %q lacks the author-cannot-be-confirmed wording", err)
-				}
-				assertUnchanged(t, f, "up-sink", before)
-			}
-		})
-	}
-}
-
 func TestContinuityDoesNotBypassThePinnedPolicy(t *testing.T) {
 	plugins.Parallel(t)
 	f := newManagerFixture(t)
@@ -525,75 +488,6 @@ func sameSet(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-func TestAnUpgradeThatWidensRemovesOrBreaksSettingsIsRefusedNamingTheDifference(t *testing.T) {
-	plugins.Parallel(t)
-	_, priv := newKey(t)
-	withField := func(key string, typ pluginapi.SettingsFieldType) func(*pluginapi.Manifest) {
-		return func(m *pluginapi.Manifest) {
-			m.Settings.Fields = []pluginapi.SettingsField{{Key: key, Type: typ}}
-		}
-	}
-	both := func(m *pluginapi.Manifest) {
-		m.Provides = append(m.Provides, plugintest.SubtitleManifest("x").Provides...)
-	}
-
-	for _, tc := range []struct {
-		name     string
-		id       string
-		old, new func(*pluginapi.Manifest)
-		wantIn   string
-	}{
-		{name: "a new network host", id: "up-sink",
-			new: func(m *pluginapi.Manifest) { m.Network.Hosts = []string{"api.example.test"} }, wantIn: "api.example.test"},
-		{name: "a new extension point", id: "up-sink", new: both, wantIn: string(pluginapi.ExtensionSubtitleProvider)},
-		{name: "a removed extension point", id: "up-sink", old: both, new: func(*pluginapi.Manifest) {}, wantIn: string(pluginapi.ExtensionSubtitleProvider)},
-		{name: "a setting that changes type", id: "up-sink",
-			old: withField("region", pluginapi.FieldString), new: withField("region", pluginapi.FieldInteger), wantIn: "region"},
-		{name: "a setting that is removed", id: "up-sink",
-			old: withField("region", pluginapi.FieldString), new: withField("other", pluginapi.FieldString), wantIn: "region"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newManagerFixture(t)
-			mustInstall(t, f, upgradeArchive(t, tc.id, "1.0.0", "v1", priv, upgradePublisher, tc.old))
-			before := takeSnapshot(t, f, tc.id)
-
-			_, err := upgrade(f, upgradeArchive(t, tc.id, "1.1.0", "v2", priv, upgradePublisher, tc.new))
-			if refusalReason(err) != plugins.ReasonNeedsConfirmation {
-				t.Fatalf("reason = %q (%v), want %q", refusalReason(err), err, plugins.ReasonNeedsConfirmation)
-			}
-			if !strings.Contains(err.Error(), tc.wantIn) {
-				t.Fatalf("message %q does not name %q", err, tc.wantIn)
-			}
-			assertUnchanged(t, f, tc.id, before)
-		})
-	}
-}
-
-func TestAnUpgradeThatAddsTheSocketGrantIsRefused(t *testing.T) {
-	plugins.Parallel(t)
-	f := newManagerFixture(t)
-	_, priv := newKey(t)
-	pack := func(version string, m pluginapi.Manifest) []byte {
-		m.Version = version
-		manifest := plugintest.ManifestJSON(t, m)
-		module := variantModule(t, version)
-		sig, err := signing.Sign(priv, upgradePublisher, manifest, module)
-		if err != nil {
-			t.Fatal(err)
-		}
-		doc, _ := signing.Encode(sig)
-		return plugintest.PackageZip(t, manifest, module, doc)
-	}
-	mustInstall(t, f, pack("1.0.0", plugintest.SignInManifest("up-dir", "a:b")))
-	before := takeSnapshot(t, f, "up-dir")
-
-	_, err := upgrade(f, pack("1.1.0", plugintest.SocketSignInManifest("up-dir", "x")))
-	if refusalReason(err) != plugins.ReasonNeedsConfirmation || !strings.Contains(err.Error(), "socket") {
-		t.Fatalf("a widened socket grant gave %q (%v), want a needs-confirmation refusal naming the socket", refusalReason(err), err)
-	}
-	assertUnchanged(t, f, "up-dir", before)
 }
 
 func TestSettingsAreKeptByteForByteAndANewKeyReadsItsDefault(t *testing.T) {
@@ -799,15 +693,16 @@ func TestAPreFeatureBundledRowAcceptsOnlyAnObeloSignedUpload(t *testing.T) {
 	}
 }
 
-func TestADevBuildBundledPluginWithNoKeyNeedsConfirmationAndIsNeverAppliedInOneStep(t *testing.T) {
+func TestADevBuildBundledPluginWithNoKeyIsOnlyStagedAndNeverAppliedInOneStep(t *testing.T) {
 	plugins.Parallel(t)
 	f, _, _ := bundledFixture(t, false, false)
 	_, priv := newKey(t)
 	before := takeSnapshot(t, f, "up-sink")
 
-	_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
-	if refusalReason(err) != plugins.ReasonNeedsConfirmation {
-		t.Fatalf("reason = %q (%v), want %q", refusalReason(err), err, plugins.ReasonNeedsConfirmation)
+	s := staged(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
+
+	if !s.Preview.AuthorUnconfirmed {
+		t.Fatalf("preview = %+v, want the author flagged as unconfirmed", s.Preview)
 	}
 	assertUnchanged(t, f, "up-sink", before)
 }
@@ -1303,11 +1198,9 @@ func TestRemovingThoseExtensionPointsWithNoDependentStatePassesTheDependentsChec
 		t.Run(name, func(t *testing.T) {
 			f := newManagerFixture(t)
 			mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, edit))
-			_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
-			// Issue 03's removal refusal stays until issue 06's preview: the upgrade is
-			// still refused, but as needing confirmation, not as depended upon.
-			if got := refusalReason(err); got != plugins.ReasonNeedsConfirmation {
-				t.Fatalf("reason = %q (%v), want %q", got, err, plugins.ReasonNeedsConfirmation)
+			s := staged(t, f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
+			if len(s.Preview.ExtensionPointsRemoved) == 0 {
+				t.Fatalf("preview = %+v, want the removed extension point listed", s.Preview)
 			}
 		})
 	}
