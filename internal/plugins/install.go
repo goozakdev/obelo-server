@@ -950,6 +950,14 @@ func (m *Manager) stage(ctx context.Context, man pluginapi.Manifest, manifestRaw
 
 	probe := loadOne(ctx, staged, man.ID, m.loader)
 	probeStatus := probe.Status()
+	if !probeStatus.Disabled {
+		// Compiling is not running: start the module once and look for every export
+		// its claims need, so a module that traps in _initialize or lacks a call is a
+		// refusal now and not a Plugin that fails on its first use.
+		if err := probe.probeInstance(ctx); err != nil {
+			probeStatus.Disabled, probeStatus.LastError = true, err.Error()
+		}
+	}
 	probe.close(ctx)
 	if probeStatus.Disabled {
 		return staging, "", refuse(ReasonModule, "%s", probeStatus.LastError)

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
@@ -73,3 +74,15 @@ func CheckUpgradeVersion(id, installed, offered string) error {
 
 // SetUpgradeHookForTest makes every upgrade report the aside directory it uses.
 func (m *Manager) SetUpgradeHookForTest(h func(aside string)) { m.onAside = h }
+
+// RequiredExportNames is requiredExports' names, for the external test package.
+func RequiredExportNames(m pluginapi.Manifest) []string {
+	var out []string
+	for _, r := range requiredExports(m) {
+		out = append(out, r.name)
+	}
+	return out
+}
+
+// ProbeBudget is the longest the install-time probe lets a module's start-up run.
+func ProbeBudget(p *Plugin) time.Duration { return p.probeBudget() }
