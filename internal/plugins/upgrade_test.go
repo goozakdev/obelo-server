@@ -1215,3 +1215,112 @@ func writeArchive(t *testing.T, dir string, archive []byte) {
 		}
 	}
 }
+
+// --- Removed extension points other records depend on (issue 05) ---------------
+
+func addProvides(m *pluginapi.Manifest, from pluginapi.Manifest) {
+	m.Provides = append(m.Provides, from.Provides...)
+}
+
+func withSignIn(m *pluginapi.Manifest) { addProvides(m, plugintest.SignInManifest("x", "")) }
+func withOnlineSource(m *pluginapi.Manifest) {
+	addProvides(m, plugintest.OnlineSourceManifest("x", "X", "http://x.example.test"))
+}
+func withLyric(m *pluginapi.Manifest) {
+	addProvides(m, plugintest.LyricManifest("x", "http://x.example.test"))
+}
+
+func refusalOf(t *testing.T, err error) *plugins.Refusal {
+	t.Helper()
+	var r *plugins.Refusal
+	if !errors.As(err, &r) {
+		t.Fatalf("err = %v, want a *plugins.Refusal", err)
+	}
+	return r
+}
+
+func TestRemovingASignInProviderWithIdentitiesIsRefusedWithExactCounts(t *testing.T) {
+	plugins.Parallel(t)
+	_, priv := newKey(t)
+	f := newManagerFixture(t)
+	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withSignIn))
+	f.store.identities["up-sink"] = 3
+	f.store.casualties["up-sink"] = []store.SignInCasualty{{ID: "u1", Username: "ada"}, {ID: "u2", Username: "bea"}}
+	before := takeSnapshot(t, f, "up-sink")
+
+	_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
+	r := refusalOf(t, err)
+	if r.Reason != plugins.ReasonDependents {
+		t.Fatalf("reason = %q (%v), want %q", r.Reason, err, plugins.ReasonDependents)
+	}
+	for _, want := range []string{"sign-in", "3 identities", "2 users", "uninstall up-sink to remove it"} {
+		if !strings.Contains(strings.ToLower(r.Message), want) {
+			t.Fatalf("message %q lacks %q", r.Message, want)
+		}
+	}
+	if r.Details["identities"] != 3 || r.Details["users"] != 2 {
+		t.Fatalf("details = %v, want identities 3 and users 2", r.Details)
+	}
+	assertUnchanged(t, f, "up-sink", before)
+	if f.store.identities["up-sink"] != 3 || len(f.store.casualties["up-sink"]) != 2 {
+		t.Fatal("identities or users changed")
+	}
+}
+
+func TestRemovingAnOnlineSourceProviderWithGrantsIsRefusedWithTheGrantCount(t *testing.T) {
+	plugins.Parallel(t)
+	_, priv := newKey(t)
+	f := newManagerFixture(t)
+	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withOnlineSource))
+	f.store.grants["up-sink"] = 4
+	before := takeSnapshot(t, f, "up-sink")
+
+	_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
+	r := refusalOf(t, err)
+	if r.Reason != plugins.ReasonDependents {
+		t.Fatalf("reason = %q (%v), want %q", r.Reason, err, plugins.ReasonDependents)
+	}
+	for _, want := range []string{"online-source", "4 grants", "uninstall up-sink to remove it"} {
+		if !strings.Contains(strings.ToLower(r.Message), want) {
+			t.Fatalf("message %q lacks %q", r.Message, want)
+		}
+	}
+	if r.Details["grants"] != 4 {
+		t.Fatalf("details = %v, want grants 4", r.Details)
+	}
+	assertUnchanged(t, f, "up-sink", before)
+	if f.store.grants["up-sink"] != 4 {
+		t.Fatal("grants changed")
+	}
+}
+
+func TestRemovingThoseExtensionPointsWithNoDependentStatePassesTheDependentsCheck(t *testing.T) {
+	plugins.Parallel(t)
+	_, priv := newKey(t)
+	for name, edit := range map[string]func(*pluginapi.Manifest){
+		"sign-in": withSignIn, "online source": withOnlineSource, "lyric (no dependent-state concept)": withLyric,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newManagerFixture(t)
+			mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, edit))
+			_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, nil))
+			// Issue 03's removal refusal stays until issue 06's preview: the upgrade is
+			// still refused, but as needing confirmation, not as depended upon.
+			if got := refusalReason(err); got != plugins.ReasonNeedsConfirmation {
+				t.Fatalf("reason = %q (%v), want %q", got, err, plugins.ReasonNeedsConfirmation)
+			}
+		})
+	}
+}
+
+func TestAnExtensionPointThatStaysIsNotCountedAsDropped(t *testing.T) {
+	plugins.Parallel(t)
+	_, priv := newKey(t)
+	f := newManagerFixture(t)
+	mustInstall(t, f, upgradeArchive(t, "up-sink", "1.0.0", "v1", priv, upgradePublisher, withOnlineSource))
+	f.store.grants["up-sink"] = 4
+	_, err := upgrade(f, upgradeArchive(t, "up-sink", "1.1.0", "v2", priv, upgradePublisher, withOnlineSource))
+	if refusalReason(err) == plugins.ReasonDependents {
+		t.Fatalf("a kept extension point was refused as dropped: %v", err)
+	}
+}

@@ -32,6 +32,17 @@ func (db *DB) OnlineSourceAccessForUser(userID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// OnlineSourceGrantCount is how many Users hold a grant for the Online source
+// sourceID.
+func (db *DB) OnlineSourceGrantCount(sourceID string) (int, error) {
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM user_online_source_access WHERE source_id = ?`, sourceID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: counting online source grants: %w", err)
+	}
+	return n, nil
+}
+
 // ReplaceOnlineSourceAccess sets a User's granted sources to exactly sourceIDs,
 // atomically. A non-empty set for a User holding a Rating ceiling is ErrRatingCapped
 // with the prior set kept; the ceiling is read inside the transaction that writes, so

@@ -380,6 +380,10 @@ const (
 	codePluginUpgradeVersion           = "PLUGIN_UPGRADE_VERSION"
 	codePluginUpgradePublisher         = "PLUGIN_UPGRADE_PUBLISHER"
 	codePluginUpgradeNeedsConfirmation = "PLUGIN_UPGRADE_NEEDS_CONFIRMATION"
+	// codePluginUpgradeDependents (409) — the new version drops an extension point other
+	// records depend on (Sign-in identities and Users, Online source grants). The
+	// counts are in details; uninstalling is the way to remove it.
+	codePluginUpgradeDependents = "PLUGIN_UPGRADE_DEPENDENTS"
 
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the

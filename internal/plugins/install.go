@@ -107,6 +107,9 @@ type Refusal struct {
 	// travels beside the message rather than instead of it, and Message names the
 	// first field so a caller that ignores the list still reads something useful.
 	Fields []FieldError
+	// Details is machine-readable detail of a ReasonDependents refusal (the counts of
+	// what depends on a dropped extension point), and nil for every other reason.
+	Details map[string]any
 }
 
 func (r *Refusal) Error() string { return r.Message }

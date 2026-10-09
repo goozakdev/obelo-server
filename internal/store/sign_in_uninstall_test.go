@@ -231,3 +231,17 @@ func TestDuplicateConfirmedIDsAreASet(t *testing.T) {
 		t.Fatalf("ada and dee after the uninstall = %d rows, want 0", n)
 	}
 }
+
+// TestExternalIdentityCountCountsOnlyTheProvidersOwn: every identity pluginID issued,
+// whether or not its User has another way in.
+func TestExternalIdentityCountCountsOnlyTheProvidersOwn(t *testing.T) {
+	db := openTemp(t)
+	seedUninstallUsers(t, db)
+
+	for id, want := range map[string]int{"directory": 5, "backup": 1, "gone": 1, "nobody": 0} {
+		got, err := db.ExternalIdentityCount(id)
+		if err != nil || got != want {
+			t.Fatalf("ExternalIdentityCount(%q) = %d, %v; want %d", id, got, err, want)
+		}
+	}
+}

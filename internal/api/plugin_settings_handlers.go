@@ -507,6 +507,8 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 		status, code = http.StatusConflict, codePluginUpgradePublisher
 	case plugins.ReasonNeedsConfirmation:
 		status, code = http.StatusConflict, codePluginUpgradeNeedsConfirmation
+	case plugins.ReasonDependents:
+		status, code = http.StatusConflict, codePluginUpgradeDependents
 	case plugins.ReasonPackage:
 		code = codePluginInvalidPackage
 	case plugins.ReasonModule:
@@ -518,5 +520,9 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 	case plugins.ReasonUnknown:
 		status, code = http.StatusNotFound, codePluginUnknown
 	}
-	writeError(w, status, code, refusal.Message, nil)
+	var details map[string]any
+	if len(refusal.Details) > 0 {
+		details = refusal.Details
+	}
+	writeError(w, status, code, refusal.Message, details)
 }

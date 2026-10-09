@@ -58,6 +58,13 @@ type memStore struct {
 	// singleSettingsReads and allSettingsReads count PluginSettings and
 	// AllPluginSettings calls, so a test can assert how a listing reads them.
 	singleSettingsReads, allSettingsReads int
+	// identities, casualties and grants are the state other records hold against a
+	// plugin (ADR-0069 Q5): External identities it issued, the Users who sign in
+	// only through it, and the Users granted it as an Online source. All keyed by
+	// plugin id; empty is a plugin nothing depends on.
+	identities map[string]int
+	casualties map[string][]store.SignInCasualty
+	grants     map[string]int
 }
 
 func newMemStore() *memStore {
@@ -66,6 +73,9 @@ func newMemStore() *memStore {
 		settings:   map[string][]store.PluginSetting{},
 		publishers: map[string]store.PluginPublisher{},
 		declined:   map[string]bool{},
+		identities: map[string]int{},
+		casualties: map[string][]store.SignInCasualty{},
+		grants:     map[string]int{},
 	}
 }
 
@@ -244,6 +254,24 @@ func (s *memStore) SetPluginSigner(id, publisher, keyID string) error {
 		s.rows[id] = r
 	}
 	return nil
+}
+
+func (s *memStore) SignInCasualties(pluginID string, _ []string) ([]store.SignInCasualty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]store.SignInCasualty{}, s.casualties[pluginID]...), nil
+}
+
+func (s *memStore) ExternalIdentityCount(pluginID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.identities[pluginID], nil
+}
+
+func (s *memStore) OnlineSourceGrantCount(sourceID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.grants[sourceID], nil
 }
 
 func (s *memStore) UpgradePlugin(p store.PluginUpgrade) error {

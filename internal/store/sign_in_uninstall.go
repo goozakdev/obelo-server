@@ -61,6 +61,16 @@ func (db *DB) SignInCasualties(pluginID string, otherProviders []string) ([]Sign
 	return signInCasualties(db, pluginID, otherProviders)
 }
 
+// ExternalIdentityCount is how many External identities pluginID has issued, whether
+// or not their Users have another way in.
+func (db *DB) ExternalIdentityCount(pluginID string) (int, error) {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM external_identities WHERE plugin_id = ?`, pluginID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: counting external identities: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteSignInPlugin uninstalls the Sign-in provider pluginID from the
 // database, in ONE transaction: it revokes every session of each User it
 // deletes, deletes those Users, deletes every External identity pluginID

@@ -39,6 +39,10 @@ const (
 	// ReasonNeedsConfirmation: the upgrade could proceed only after an Admin has seen
 	// what changes (an author who cannot be confirmed, something widened or removed).
 	ReasonNeedsConfirmation = "needs-confirmation"
+	// ReasonDependents: the new version drops an extension point that other records
+	// depend on (Sign-in identities and Users, Online source grants), so applying it
+	// would orphan them. Uninstalling is the way to remove the extension point.
+	ReasonDependents = "dependents"
 )
 
 // UpgradeSummary is what an applied upgrade reports about itself.
@@ -87,6 +91,9 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 	}
 	rec, bundledRelease, err := m.checkContinuity(row, hasRow, man, manifestRaw, module, signatureRaw, icon, signedBy)
 	if err != nil {
+		return Installed{}, err
+	}
+	if err := m.checkDroppedDependents(ctx, id, old, man); err != nil {
 		return Installed{}, err
 	}
 	if diffs := upgradeDifferences(old, man); len(diffs) > 0 {
@@ -550,6 +557,85 @@ func upgradeDifferences(old, next pluginapi.Manifest) []string {
 		}
 	}
 	return out
+}
+
+// dependentStateStore is the part of the store that counts what other records hold
+// against a plugin. A store without it has no such records, so nothing is refused.
+type dependentStateStore interface {
+	SignInCasualties(pluginID string, otherProviders []string) ([]store.SignInCasualty, error)
+	ExternalIdentityCount(pluginID string) (int, error)
+	OnlineSourceGrantCount(sourceID string) (int, error)
+}
+
+// The production store must keep satisfying it, or the dependents check would
+// silently stop running.
+var _ dependentStateStore = (*store.DB)(nil)
+
+// checkDroppedDependents refuses an upgrade that drops an extension point whose
+// removal would orphan stored state: External identities and the Users who sign in
+// only through a Sign-in provider, Users' grants of an Online source. Dropping any
+// other extension point, or one nothing depends on, passes this check. Caller holds
+// mu.
+func (m *Manager) checkDroppedDependents(ctx context.Context, id string, old, next pluginapi.Manifest) error {
+	st, ok := m.store.(dependentStateStore)
+	if !ok {
+		return nil
+	}
+	kept := map[pluginapi.ExtensionPoint]bool{}
+	for _, p := range next.Provides {
+		kept[p.Kind] = true
+	}
+	var dropped []string
+	details := map[string]any{}
+	var facts []string
+	for _, p := range old.Provides {
+		if kept[p.Kind] {
+			continue
+		}
+		kept[p.Kind] = true
+		switch p.Kind {
+		case pluginapi.ExtensionSignInProvider:
+			others, _, err := m.signInProviders(ctx, id)
+			if err != nil {
+				return err
+			}
+			users, err := st.SignInCasualties(id, others)
+			if err != nil {
+				return err
+			}
+			identities, err := st.ExternalIdentityCount(id)
+			if err != nil {
+				return err
+			}
+			if identities == 0 && len(users) == 0 {
+				continue
+			}
+			details["identities"], details["users"] = identities, len(users)
+			facts = append(facts, fmt.Sprintf("%d identities and %d users who sign in only through it", identities, len(users)))
+		case pluginapi.ExtensionOnlineSourceProvider:
+			grants, err := st.OnlineSourceGrantCount(id)
+			if err != nil {
+				return err
+			}
+			if grants == 0 {
+				continue
+			}
+			details["grants"] = grants
+			facts = append(facts, fmt.Sprintf("%d grants", grants))
+		default:
+			continue
+		}
+		dropped = append(dropped, string(p.Kind))
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	details["extensionPoints"] = dropped
+	r := refuse(ReasonDependents,
+		"this version drops %s; %s depend on it; uninstall %s to remove it",
+		strings.Join(dropped, " and "), strings.Join(facts, " and "), id)
+	r.Details = details
+	return r
 }
 
 // --- Semantic versions ---------------------------------------------------------
