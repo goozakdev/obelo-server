@@ -145,7 +145,7 @@ func has(id string) bool {
 // ones. See [SupplyForTests].
 var supplied sync.Map // id -> pair
 
-type pair struct{ manifest, module []byte }
+type pair struct{ manifest, module, signature []byte }
 
 // SupplyForTests stands a decompressed module in for the embedded one, for the
 // rest of this process. THE SERVER NEVER CALLS IT.
@@ -187,6 +187,19 @@ func SupplyForTests(id string, manifestRaw, module []byte) error {
 		return fmt.Errorf("bundled: supplying %q needs both a manifest and a module", id)
 	}
 	supplied.Store(id, pair{manifest: manifestRaw, module: module})
+	return nil
+}
+
+// SupplySignatureForTests stands a signature document in for the embedded one of
+// an id already supplied with [SupplyForTests]. THE SERVER NEVER CALLS IT.
+func SupplySignatureForTests(id string, signature []byte) error {
+	v, ok := supplied.Load(id)
+	if !ok {
+		return fmt.Errorf("bundled: %q has not been supplied, so there is nothing to sign", id)
+	}
+	p := v.(pair)
+	p.signature = signature
+	supplied.Store(id, p)
 	return nil
 }
 

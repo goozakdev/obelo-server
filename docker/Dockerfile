@@ -39,7 +39,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2 — plugins: compile the seven Bundled plugins to WebAssembly
+# Stage 2 — plugins: compile the nine Bundled plugins to WebAssembly
 # (ADR-0059, .scratch/bundled-plugins).
 #
 # WITHOUT THIS STAGE THE IMAGE SHIPS NO METADATA PROVIDERS AT ALL — a server that
@@ -59,12 +59,12 @@ RUN npm run build
 # the web and build stages: the .wasm is the same bytes whatever compiles it, and
 # wazero picks its backend from the machine the SERVER runs on (ADR-0058 decision
 # 1), not from the one that built the module. `make check-amd64` is what proves the
-# amd64 backend runs these seven.
+# amd64 backend runs these modules.
 #
 # ITS CACHE KEY IS ITS INPUTS, which is the point of it being its own stage: it
 # copies only the module files, the contract, the SDK and plugins/, so an ordinary
 # edit under cmd/ or internal/ reuses this layer and costs nothing, while a change
-# to a plugin rebuilds exactly these seven. go.mod/go.sum/go.work come along
+# to a plugin rebuilds exactly these modules. go.mod/go.sum/go.work come along
 # because the root module is a workspace member and each plugins/<id>/go.mod
 # `replace`s the two local modules by directory path.
 # ---------------------------------------------------------------------------
@@ -79,6 +79,45 @@ COPY scripts/build-bundled-plugins.sh ./scripts/
 
 RUN set -eux; \
     sh ./scripts/build-bundled-plugins.sh /out/modules /tmp/plugins; \
+    ls -l /out/modules/
+
+# ---------------------------------------------------------------------------
+# Stage 2b — sign-plugins: sign the Bundled modules with the Obelo release key
+# (ADR-0069 Q8, .scratch/plugin-inplace-upgrade issue 02).
+#
+# A stage of its own so the `plugins` stage keeps its narrow cache key (it copies no
+# cmd/ or internal/, and pluginsign needs both): only an image build that signs pays
+# for this one.
+#
+# THE PRIVATE KEY IS A BUILDKIT SECRET AND NOTHING ELSE. No ARG, no ENV: the mount
+# exists only while this one RUN executes, so it is never a layer, never image
+# metadata, never the build cache, and never in `ps` or `docker history`. It is
+# required=false: without it the modules pass through unsigned, which is the dev
+# build. The secret VALUE is excluded from the cache key, so a rotated key reuses a
+# cached signing layer unless CACHE_EPOCH changes — bump it with the others.
+#
+#   docker build -f docker/Dockerfile \
+#     --secret id=release_sign_key,env=OBELO_RELEASE_SIGNING_KEY \
+#     --secret id=release_pub_key,env=OBELO_RELEASE_PUBLIC_KEY ...
+# ---------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS sign-plugins
+WORKDIR /src
+
+COPY go.mod go.sum go.work* ./
+COPY pluginapi/ ./pluginapi/
+COPY pluginsdk/ ./pluginsdk/
+COPY plugins/ ./plugins/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY scripts/sign-bundled-plugins.sh ./scripts/
+COPY --from=plugins /out/modules/ /out/modules/
+
+ARG CACHE_EPOCH=""
+RUN --mount=type=secret,id=release_sign_key \
+    set -eu; \
+    : "cache-epoch ${CACHE_EPOCH}"; \
+    OBELO_RELEASE_SIGNING_KEY_FILE=/run/secrets/release_sign_key \
+      sh ./scripts/sign-bundled-plugins.sh /out/modules; \
     ls -l /out/modules/
 
 # ---------------------------------------------------------------------------
@@ -121,10 +160,10 @@ COPY --from=web /src/internal/webui/dist/ ./internal/webui/dist/
 
 # The Bundled plugins (ADR-0059), BEFORE the Go build, because internal/bundled
 # embeds this directory with go:embed. It is gitignored, so the COPY above brought
-# only its committed .keep marker; these are the seven modules the plugins stage
+# only its committed .keep marker; these are the modules the plugins stage
 # compiled. See that stage for what happens without them, which is worse than a
 # build failure.
-COPY --from=plugins /out/modules/ ./internal/bundled/modules/
+COPY --from=sign-plugins /out/modules/ ./internal/bundled/modules/
 
 # Default metadata credentials (ADR-0032), injected only for OFFICIAL image builds
 # from CI secrets — ABSENT by default so a plain `docker build` bundles no keys and
@@ -194,9 +233,15 @@ ARG CACHE_EPOCH=""
 # The node runs userspace WireGuard over a gVisor network stack inside the server
 # process, which needs none of those. If a future change appears to need any of
 # them, the approach is wrong — not this Dockerfile.
+#
+# THE OBELO RELEASE PUBLIC KEY (secret `release_pub_key`, ADR-0069) is injected the same
+# way. It is not confidential, but a mount keeps it out of ARG/ENV and `docker history`
+# like its neighbours. When present this is a RELEASE build, and the guard below fails the
+# build unless every embedded Bundled module verifies under it.
 RUN --mount=type=secret,id=tmdb_key \
     --mount=type=secret,id=fanart_key \
     --mount=type=secret,id=app_enc_key \
+    --mount=type=secret,id=release_pub_key \
     set -eu; \
     : "cache-epoch ${CACHE_EPOCH}"; \
     read_secret() { if [ -f "$1" ]; then cat "$1"; fi; }; \
@@ -204,12 +249,16 @@ RUN --mount=type=secret,id=tmdb_key \
     TMDB_OBF=$(read_secret /run/secrets/tmdb_key | base64 | tr -d '\n'); \
     FANART_OBF=$(read_secret /run/secrets/fanart_key | base64 | tr -d '\n'); \
     APP_ENC_KEY=$(read_secret /run/secrets/app_enc_key); \
+    RELEASE_PUB=$(read_secret /run/secrets/release_pub_key); \
+    BUNDLED_PKG=github.com/goozakdev/obelo-server/internal/bundled; \
+    OBELO_RELEASE_PUBLIC_KEY="${RELEASE_PUB}" go run ./internal/bundled/cmd/checksigned; \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -tags tailscale -ldflags="-s -w \
       -X ${CONFIG_PKG}.bootstrapTMDBKey=${TMDB_OBF} \
       -X ${CONFIG_PKG}.bootstrapFanartKey=${FANART_OBF} \
       -X ${CONFIG_PKG}.kAppEncKey=${APP_ENC_KEY} \
-      -X ${CONFIG_PKG}.DefaultKeyRotationURL=${OBELO_ROTATION_URL}" \
+      -X ${CONFIG_PKG}.DefaultKeyRotationURL=${OBELO_ROTATION_URL} \
+      -X ${BUNDLED_PKG}.releasePublicKey=${RELEASE_PUB}" \
       -o /out/obelo ./cmd/obelo
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ package bundled
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -49,6 +50,7 @@ type Store interface {
 	InsertPlugin(p store.PluginInsert) error
 	UpdatePluginManifest(p store.PluginInsert) error
 	DeclinedPluginIDs() ([]string, error)
+	SetPluginSignerKey(id, name, key, keyID string) error
 }
 
 // Source is this server's shipped plugins, bound to one data directory and one
@@ -60,6 +62,13 @@ type Source struct {
 	dir   string
 	store Store
 	logf  func(string, ...any)
+
+	// releaseKey is the Obelo release public key compiled into this binary, nil on a
+	// dev build (release.go).
+	releaseKey ed25519.PublicKey
+	// keyErr is set when a release key was compiled in but cannot be parsed; every
+	// install is then refused.
+	keyErr error
 }
 
 var _ plugins.BundledSource = (*Source)(nil)
@@ -75,7 +84,18 @@ func NewSource(dataDir string, st Store, logf func(string, ...any)) *Source {
 	if logf == nil {
 		logf = log.Printf
 	}
-	return &Source{dir: filepath.Join(dataDir, plugins.DirName), store: st, logf: logf}
+	s := &Source{dir: filepath.Join(dataDir, plugins.DirName), store: st, logf: logf}
+	key, err := releaseKeyFromBuild()
+	switch {
+	case err != nil:
+		s.keyErr = err
+		logf("obelo: %v; no Bundled plugin will be installed or replaced", err)
+	case key != nil:
+		s.releaseKey = key
+	default:
+		logf("obelo: this is a development build with no Obelo release key; Bundled plugins are installed unsigned")
+	}
+	return s
 }
 
 // Has reports whether this server ships a plugin with this id and carries a
@@ -170,6 +190,7 @@ func (s *Source) assert(_ context.Context, id string, row store.PluginRow) error
 		// loader will read, rather than what the row remembers.
 		installed := s.installedVersion(id)
 		if !olderThan(installed, shipped.Version) {
+			s.recordExisting(id, row)
 			return nil
 		}
 		s.logf("obelo: replacing the installed %s plugin (version %s) with the one this server ships (version %s)",
@@ -180,8 +201,25 @@ func (s *Source) assert(_ context.Context, id string, row store.PluginRow) error
 	if err != nil {
 		return err
 	}
+	// On a release build nothing is written, and nothing already installed is
+	// touched, unless the Obelo key verifies this exact manifest and module.
+	var signature []byte
+	if s.keyErr != nil {
+		return fmt.Errorf("%s was not installed: %w", id, s.keyErr)
+	}
+	if s.releaseKey != nil {
+		signature = Signature(id)
+		if _, err := verifyDocument(signature, s.releaseKey, manifestRaw, module); err != nil {
+			return fmt.Errorf("REFUSED to install the shipped plugin %s: %w", id, err)
+		}
+	}
 	if err := plugins.InstallFiles(s.dir, id, manifestRaw, module); err != nil {
 		return err
+	}
+	if signature != nil {
+		if err := os.WriteFile(filepath.Join(s.dir, id, pluginapi.SignatureFile), signature, 0o644); err != nil {
+			return fmt.Errorf("writing the signature of %s: %w", id, err)
+		}
 	}
 	if s.store == nil {
 		return nil
@@ -196,10 +234,26 @@ func (s *Source) assert(_ context.Context, id string, row store.PluginRow) error
 		Origin:     plugins.OriginBundled,
 	}
 	if hasRow {
-		return s.store.UpdatePluginManifest(record)
+		if err := s.store.UpdatePluginManifest(record); err != nil {
+			return err
+		}
+		if signature != nil {
+			return s.recordKey(id)
+		}
+		if row.SignerKey != "" {
+			// Unsigned bytes replaced a copy that had a recorded key (a dev build over a
+			// release row): never let the row go on claiming a signer for them.
+			return s.store.SetPluginSignerKey(id, "", "", "")
+		}
+		return nil
 	}
 	if err := s.store.InsertPlugin(record); err != nil {
 		return err
+	}
+	if signature != nil {
+		if err := s.recordKey(id); err != nil {
+			return err
+		}
 	}
 	s.logf("obelo: the plugin %s (%s %s) shipped with this server and was installed", shipped.ID, shipped.Name, shipped.Version)
 	return nil

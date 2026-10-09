@@ -24,6 +24,24 @@ BIN := bin/obelo
 # Note OBELO_ROTATION_URL is the BUILD-time default; the RUNTIME override is the
 # separate OBELO_KEY_ROTATION_URL env var read by config.FromEnv.
 # `printf %s "" | base64` is empty, so an unset key injects an empty string.
+#
+# Bundled plugin signing (ADR-0069, .scratch/plugin-inplace-upgrade issue 02). OFFICIAL
+# builds additionally export, next to the OBELO_BOOTSTRAP_* values:
+#   OBELO_RELEASE_SIGNING_KEY  — the base64 ed25519 PRIVATE key. CI secret ONLY: it is
+#                                read by scripts/sign-bundled-plugins.sh (run by
+#                                `make plugins`) to write <id>.sig.json beside every
+#                                Bundled module, and is never in the tree, a -X flag, the
+#                                binary or an image layer. In docker/Dockerfile it is the
+#                                BuildKit secret `release_sign_key`, mounted only in the
+#                                `sign-plugins` stage.
+#   OBELO_RELEASE_PUBLIC_KEY   — the matching PUBLIC key, injected with -X like kAppEncKey
+#                                (secret `release_pub_key` in the Dockerfile). Its presence
+#                                makes this a RELEASE build: boot refuses any Bundled
+#                                module that does not verify under it, and
+#                                `make check-bundled-signatures` (run by `make plugins`
+#                                and `make build-release`) fails on any unsigned module.
+# Both unset (a plain `make build`/`make plugins`) ships Bundled plugins unsigned with no
+# recorded key and no error.
 # The `tailscale` build tag (ADR-0043). RELEASE artifacts carry it — the Docker
 # image and the release binaries — so the shipped server can join the operator's
 # Tailnet; the default `go-build` target does NOT, so day-to-day development stays
@@ -116,12 +134,14 @@ AMD64_MOD_CACHE   ?= obelo-go-mod-amd64
 AMD64_BUILD_CACHE ?= obelo-go-build-amd64
 
 CONFIG_PKG := github.com/goozakdev/obelo-server/internal/config
+BUNDLED_PKG := github.com/goozakdev/obelo-server/internal/bundled
 BOOTSTRAP_TMDB_OBF   := $(shell printf %s "$(OBELO_BOOTSTRAP_TMDB_KEY)" | base64 | tr -d '\n')
 BOOTSTRAP_FANART_OBF := $(shell printf %s "$(OBELO_BOOTSTRAP_FANART_KEY)" | base64 | tr -d '\n')
 LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).bootstrapFanartKey=$(BOOTSTRAP_FANART_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
-           -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
+           -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL) \
+           -X $(BUNDLED_PKG).releasePublicKey=$(OBELO_RELEASE_PUBLIC_KEY)
 
 # GOPKGS is what `go test` and `go vet` walk, and it is three patterns rather than
 # one because this repository is three Go modules joined by go.work (ADR-0059
@@ -157,7 +177,7 @@ PLUGIN_BUILD_DIR := bin/plugins
 
 GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
 
-.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-markerdetect-docker test-quick test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release plugins check-bundled-signatures keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-markerdetect-docker test-quick test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
@@ -178,12 +198,13 @@ web:
 ## artifact. The two differ in exactly one advertised capability —
 ## GET /server's features.tailscale — and in nothing else.
 go-build:
+	@[ -z "$$OBELO_RELEASE_PUBLIC_KEY" ] || go run ./internal/bundled/cmd/checksigned
 	go build $(GOTAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/obelo
 
 ## build-release: the artifact that ships — the Bundled plugin modules, the SPA
 ## bundle, and the Go binary WITH the `tailscale` tag (ADR-0043), matching what
 ## docker/Dockerfile produces.
-build-release: plugins web go-build-release
+build-release: plugins check-bundled-signatures web go-build-release
 
 ## go-build-release: go-build with the release tags.
 go-build-release:
@@ -193,15 +214,27 @@ go-build-release:
 ## (ADR-0059 decision 10, .scratch/bundled-plugins).
 ##
 ## THE RECIPE IS A SCRIPT AND NOT A LOOP HERE, deliberately. docker/Dockerfile has
-## to build the same seven modules before `go build` — internal/bundled/modules/ is
+## to build the same Bundled modules before `go build` — internal/bundled/modules/ is
 ## gitignored, so an image built without that step compiles, boots, scans and
 ## silently enriches NOTHING — and for one release that loop existed twice, in this
 ## file and in that one, with a comment asking the next person to keep them in
 ## step. scripts/build-bundled-plugins.sh is now the single definition, and the
 ## Dockerfile's `plugins` stage runs the same file. Read it for why the build
 ## command is spelled the way it is (.scratch/bundled-plugins: issue 08).
+##
+## It then signs every module with the Obelo release key when OBELO_RELEASE_SIGNING_KEY
+## is set (scripts/sign-bundled-plugins.sh; nothing is signed, and nothing fails,
+## without it) and, when OBELO_RELEASE_PUBLIC_KEY is set, runs the release guard.
 plugins:
 	@./scripts/build-bundled-plugins.sh $(BUNDLED_DIR) $(PLUGIN_BUILD_DIR)
+	@./scripts/sign-bundled-plugins.sh $(BUNDLED_DIR)
+	@[ -z "$$OBELO_RELEASE_PUBLIC_KEY" ] || go run ./internal/bundled/cmd/checksigned
+
+## check-bundled-signatures: the release guard. Fails if OBELO_RELEASE_PUBLIC_KEY is
+## set (the key is being compiled in) and any embedded Bundled module has no signature
+## that verifies under it; passes when all are signed or no key is set.
+check-bundled-signatures:
+	@go run ./internal/bundled/cmd/checksigned
 
 ## keytool: build the offline maintainer key-rotation CLI (ADR-0032). Seals default
 ## provider keys into the rotation envelope for the runbook — never bundles a secret,
@@ -495,6 +528,7 @@ check-amd64: test-go-amd64 test-go-amd64-tailscale
 CHECK_RELEASE_SKIP_AMD64 ?=
 CHECK_RELEASE_MAKE := $(MAKE)
 check-release:
+	@[ -z "$$OBELO_RELEASE_PUBLIC_KEY" ] || go run ./internal/bundled/cmd/checksigned
 	@CHECK_RELEASE_SKIP_AMD64="$(CHECK_RELEASE_SKIP_AMD64)" EMBED_DIR="$(EMBED_DIR)" CHECK_RELEASE_MAKE="$(CHECK_RELEASE_MAKE)" ./scripts/check-release.sh
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.

@@ -481,3 +481,10 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(raw)
 }
+
+func (s *assertStore) SetPluginSignerKey(id, name, key, keyID string) error {
+	row := s.rows[id]
+	row.SignerName, row.SignerKey, row.SignerKeyID = name, key, keyID
+	s.rows[id] = row
+	return nil
+}
