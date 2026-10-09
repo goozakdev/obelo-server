@@ -56,10 +56,22 @@ type CatalogResult struct {
 	URL string
 	// Entries is what the index offered, in its own order. Empty when the fetch
 	// failed, and then Note says why.
-	Entries []pluginapi.CatalogEntry
+	Entries []CatalogListing
 	// Note is the quiet sentence for the operator when the catalog could not be
 	// read. Empty means it was read.
 	Note string
+}
+
+// CatalogListing is an index entry as this server lists it: the index's own claims,
+// plus — when the entry offers a strictly higher semantic version of a plugin that is
+// Installed — the "Update available" hint (ADR-0069). The hint is computed from the
+// index's claimed version and the Installed row alone, fetches nothing, and is only a
+// hint: installing the entry re-checks everything, so an entry signed by another key
+// still refuses.
+type CatalogListing struct {
+	pluginapi.CatalogEntry
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	UpdateAvailable  bool   `json:"updateAvailable,omitempty"`
 }
 
 // Catalog reads the configured index.
@@ -75,7 +87,7 @@ func (m *Manager) Catalog(ctx context.Context) (CatalogResult, error) {
 	if target == "" {
 		return CatalogResult{}, nil
 	}
-	out := CatalogResult{URL: target, Entries: []pluginapi.CatalogEntry{}}
+	out := CatalogResult{URL: target, Entries: []CatalogListing{}}
 
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -119,7 +131,11 @@ func (m *Manager) Catalog(ctx context.Context) (CatalogResult, error) {
 		out.Note = fmt.Sprintf("The catalog at %s did not answer with a plugin index.", target)
 		return out, nil
 	}
-	out.Entries = usableEntries(index.Entries)
+	installed, err := m.installedVersions()
+	if err != nil {
+		return CatalogResult{}, err
+	}
+	out.Entries = listings(usableEntries(index.Entries), installed)
 	if len(out.Entries) == 0 && len(index.Entries) > 0 {
 		out.Note = "Every entry in this catalog is missing a package URL, so there is nothing to install from it."
 	}
@@ -146,6 +162,38 @@ func usableEntries(in []pluginapi.CatalogEntry) []pluginapi.CatalogEntry {
 			e.Name = e.ID
 		}
 		out = append(out, e)
+	}
+	return out
+}
+
+// installedVersions is every Installed row's version by id, for the update hint.
+func (m *Manager) installedVersions() (map[string]string, error) {
+	rows, err := m.rows()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Version
+	}
+	return out, nil
+}
+
+// listings flags the entries that are a strictly higher semantic version than the
+// Installed copy, the same ordering an upgrade uses (checkUpgradeVersion). A version
+// that is not semver on either side gives no flag and no error.
+func listings(entries []pluginapi.CatalogEntry, installed map[string]string) []CatalogListing {
+	out := make([]CatalogListing, 0, len(entries))
+	for _, e := range entries {
+		l := CatalogListing{CatalogEntry: e}
+		if have, ok := installed[e.ID]; ok {
+			a, okA := parseSemver(have)
+			b, okB := parseSemver(e.Version)
+			if okA && okB && compareSemver(b, a) > 0 {
+				l.InstalledVersion, l.UpdateAvailable = have, true
+			}
+		}
+		out = append(out, l)
 	}
 	return out
 }

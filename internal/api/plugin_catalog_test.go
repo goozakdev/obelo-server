@@ -50,6 +50,9 @@ type catalogEntryResp struct {
 	PackageURL  string   `json:"packageUrl"`
 	Description string   `json:"description"`
 	DocsURL     string   `json:"docsUrl"`
+	// InstalledVersion and UpdateAvailable are the "Update available" hint.
+	InstalledVersion string `json:"installedVersion"`
+	UpdateAvailable  bool   `json:"updateAvailable"`
 }
 
 type catalogResp struct {

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
-	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The optional catalog and the pinned publisher keys (.scratch/plugin-system
@@ -64,7 +63,7 @@ type pluginCatalogResponse struct {
 	URL string `json:"url"`
 	// Entries is what the index offered, in its own order, [] when it could not be
 	// read or genuinely holds nothing.
-	Entries []pluginapi.CatalogEntry `json:"entries"`
+	Entries []plugins.CatalogListing `json:"entries"`
 	// Error is the quiet note for the operator, "" when the catalog was read.
 	Error string `json:"error"`
 }
@@ -129,7 +128,7 @@ func writePluginCatalog(w http.ResponseWriter, r *http.Request, deps Deps) {
 	}
 	entries := result.Entries
 	if entries == nil {
-		entries = []pluginapi.CatalogEntry{}
+		entries = []plugins.CatalogListing{}
 	}
 	writeJSON(w, http.StatusOK, pluginCatalogResponse{
 		URL:     result.URL,

@@ -172,6 +172,28 @@ func TestAFetchedPackageOverTheCapIsRefusedNotTruncated(t *testing.T) {
 	}
 }
 
+// TestAnUpgradeFetchOverTheCapIsRefusedAndTheInstalledCopyStays: the size cap is on
+// the fetch, so an upgrade of a known id gets it exactly as a first install does.
+func TestAnUpgradeFetchOverTheCapIsRefusedAndTheInstalledCopyStays(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates a package-sized buffer")
+	}
+	t.Parallel()
+	m := newURLManager(t)
+	archive := plugintest.PackageZip(t, plugintest.ManifestJSON(t, plugintest.SinkManifest("url-pkg")), plugintest.Guest(t), nil)
+	if _, err := m.InstallFromURL(context.Background(), serveBytes(t, archive).URL+"/v1.zip"); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	_, err := m.InstallFromURL(context.Background(), serveBytes(t, make([]byte, plugins.MaxPackageBytes+1)).URL+"/v2.zip")
+	if refusalReason(err) != plugins.ReasonSource || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("err = %v, want a source refusal saying the package is too large", err)
+	}
+	if list, _ := m.List(context.Background()); len(list) != 1 || list[0].ID != "url-pkg" {
+		t.Fatalf("list = %+v, want url-pkg still installed", list)
+	}
+}
+
 func TestAFetchedFileThatIsNotAZipIsAPackageRefusal(t *testing.T) {
 	t.Parallel()
 	m := newURLManager(t)
