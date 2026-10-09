@@ -5,7 +5,20 @@ import (
 	"net"
 	"net/http"
 	"testing"
+
+	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
+
+// MigrateSettings is migrateSettings for the external test package.
+func MigrateSettings(old, next []pluginapi.SettingsField, stored []store.PluginSetting) ([]store.PluginSetting, SettingsReport) {
+	mig := migrateSettings(old, next, stored)
+	return mig.rows, mig.report
+}
+
+// SetAllowSettingLossForTest lets an upgrade apply while it drops or deletes a
+// setting. Until the preview (issue 06) exists nothing outside a test may.
+func (m *Manager) SetAllowSettingLossForTest(allow bool) { m.allowSettingLoss = allow }
 
 // ResolveAs is resolveAs for the external test package: every name the
 // private-address check asks about resolves to addr for the rest of the test.

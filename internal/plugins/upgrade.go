@@ -55,6 +55,8 @@ type UpgradeSummary struct {
 	Publisher        string `json:"publisher,omitempty"`
 	ClaimedPublisher string `json:"claimedPublisher,omitempty"`
 	KeyID            string `json:"keyId,omitempty"`
+	// Settings is what the upgrade did to the plugin's stored settings.
+	Settings SettingsReport `json:"settings"`
 }
 
 // releaseKeyed is what a BundledSource built into a release implements: the Obelo
@@ -96,7 +98,20 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 	if err := m.checkDroppedDependents(ctx, id, old, man); err != nil {
 		return Installed{}, err
 	}
-	if diffs := upgradeDifferences(old, man); len(diffs) > 0 {
+	diffs := upgradeDifferences(old, man)
+	var stored []store.PluginSetting
+	if m.store != nil {
+		if stored, err = m.store.PluginSettings(id); err != nil {
+			return Installed{}, err
+		}
+	}
+	mig := migrateSettings(settingsFields(old), settingsFields(man), stored)
+	if !m.allowSettingLoss {
+		// A schema that no longer lines up, or a value that would be lost, waits for
+		// the preview (issue 06).
+		diffs = append(diffs, settingsDifferences(old, man)...)
+	}
+	if len(diffs) > 0 {
 		return Installed{}, refuse(ReasonNeedsConfirmation,
 			"upgrading %s from %s to %s needs confirmation: %s. This server cannot yet apply an upgrade that changes what a plugin may do or the settings it keeps; "+
 				"uninstall the plugin and install the new version instead (its settings are not kept)",
@@ -149,6 +164,9 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 			// previous version had is overwritten, so the API never shows it.
 			Publisher: signedBy.Publisher, KeyID: signedBy.KeyID,
 			SignerName: rec.name, SignerKey: rec.key, SignerKeyID: rec.keyID,
+			// Only an upgrade that loses a value rewrites the settings; any other leaves
+			// every row byte-identical. Same transaction as the row.
+			ReplaceSettings: mig.lossy(), Settings: mig.rows,
 		}); err != nil {
 			restore()
 			return Installed{}, err
@@ -165,7 +183,7 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 	if rebuildErr != nil {
 		return Installed{}, rebuildErr
 	}
-	summary := &UpgradeSummary{From: old.Version, To: man.Version, KeyID: rec.keyID}
+	summary := &UpgradeSummary{From: old.Version, To: man.Version, KeyID: rec.keyID, Settings: mig.report}
 	if signedBy.Publisher != "" || bundledRelease {
 		summary.Publisher = rec.name
 		m.logf("obelo: plugin %s was upgraded from %s to %s (signed by %q, key id %s) from %s",
@@ -175,6 +193,9 @@ func (m *Manager) upgrade(ctx context.Context, man pluginapi.Manifest, manifestR
 		m.logf("obelo: plugin %s was upgraded from %s to %s (signed with key id %s, which claims to be %q) from %s",
 			id, old.Version, man.Version, rec.keyID, rec.name, source)
 	}
+	// Keys and reasons only: a secret's value is never logged.
+	m.logf("obelo: plugin %s: settings on upgrade: %d kept, %d added, dropped %v, deleted %v, %d added need a value",
+		id, len(mig.report.Kept), len(mig.report.Added), droppedKeys(mig.report.Dropped), mig.report.Deleted, len(mig.report.NeedsValue))
 	view, err := m.view(ctx, id)
 	if err != nil {
 		return Installed{}, err
@@ -503,9 +524,8 @@ func checkUpgradeVersion(id, installed, offered string) error {
 	return nil
 }
 
-// upgradeDifferences lists everything about an upgrade this slice will not apply
-// without confirmation: what widens, what is removed, and a settings schema whose
-// keys or types no longer line up. Empty means the upgrade is safe in one step.
+// upgradeDifferences lists what an upgrade widens or removes, which this slice will
+// not apply without confirmation. Settings are judged separately (settingsDifferences).
 func upgradeDifferences(old, next pluginapi.Manifest) []string {
 	var out []string
 
@@ -543,6 +563,13 @@ func upgradeDifferences(old, next pluginapi.Manifest) []string {
 		out = append(out, fmt.Sprintf("it removes the %s extension point", p.Kind))
 	}
 
+	return out
+}
+
+// settingsDifferences names every declared setting the new version removes or retypes,
+// whether or not a value is stored for it.
+func settingsDifferences(old, next pluginapi.Manifest) []string {
+	var out []string
 	nextTypes := map[string]pluginapi.SettingsFieldType{}
 	for _, f := range settingsFields(next) {
 		nextTypes[f.Key] = f.Type

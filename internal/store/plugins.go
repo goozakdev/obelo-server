@@ -87,19 +87,30 @@ type PluginUpgrade struct {
 	SignerName  string
 	SignerKey   string
 	SignerKeyID string
+	// ReplaceSettings, when true, makes the upgrade replace the plugin's settings with
+	// Settings in the same transaction as the row, so a refused upgrade leaves every
+	// setting as it was. False leaves the settings table untouched.
+	ReplaceSettings bool
+	Settings        []PluginSetting
 }
 
 // UpgradePlugin replaces an existing row's manifest facts, provenance, origin and
-// signer in one statement. It touches nothing else: the settings, the Admin's
-// enable switch, the install time and every per-Library reference belong to the
-// plugin that is still there. It fails when there is no such row, because an upgrade
+// signer in one transaction. It touches nothing else: the settings (unless the caller
+// hands over the migrated set), the plugin's key-value data, the Admin's enable
+// switch, the install time and every per-Library reference belong to the plugin that
+// is still there. It fails when there is no such row, because an upgrade
 // of nothing is a bug in the caller.
 func (db *DB) UpgradePlugin(p PluginUpgrade) error {
 	provides, err := json.Marshal(nonNilProvides(p.Provides))
 	if err != nil {
 		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
 	}
-	res, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: upgrading plugin %q: %w", p.ID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(
 		`UPDATE plugins SET name = ?, version = ?, api_version = ?, provides = ?, source = ?, origin = ?,
 		        publisher = ?, key_id = ?, signer_name = ?, signer_key = ?, signer_key_id = ?, last_error = NULL
 		  WHERE id = ?`,
@@ -114,6 +125,22 @@ func (db *DB) UpgradePlugin(p PluginUpgrade) error {
 	}
 	if n == 0 {
 		return fmt.Errorf("store: upgrading plugin %q: there is no such row", p.ID)
+	}
+	if p.ReplaceSettings {
+		if _, err := tx.Exec(`DELETE FROM plugin_settings WHERE plugin_id = ?`, p.ID); err != nil {
+			return fmt.Errorf("store: upgrading the settings of plugin %q: %w", p.ID, err)
+		}
+		for _, v := range p.Settings {
+			if _, err := tx.Exec(
+				`INSERT INTO plugin_settings (plugin_id, key, value, secret, updated_at)
+				      VALUES (?, ?, ?, ?, datetime('now'))`,
+				p.ID, v.Key, v.Value, v.Secret); err != nil {
+				return fmt.Errorf("store: upgrading the setting %q of plugin %q: %w", v.Key, p.ID, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: upgrading plugin %q: %w", p.ID, err)
 	}
 	return nil
 }

@@ -289,6 +289,9 @@ func (s *memStore) UpgradePlugin(p store.PluginUpgrade) error {
 	r.SignerName, r.SignerKey, r.SignerKeyID = p.SignerName, p.SignerKey, p.SignerKeyID
 	r.LastError = ""
 	s.rows[p.ID] = r
+	if p.ReplaceSettings {
+		s.settings[p.ID] = append([]store.PluginSetting(nil), p.Settings...)
+	}
 	return nil
 }
 

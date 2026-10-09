@@ -338,6 +338,9 @@ type Manager struct {
 	bundled  BundledSource
 	// onAside, set only by a test, hears the directory an upgrade moves the old files to.
 	onAside func(aside string)
+	// allowSettingLoss, set only by a test, lets an upgrade apply while it drops or
+	// deletes a stored setting; until the preview (issue 06) exists it never is.
+	allowSettingLoss bool
 
 	allowPrivateSources bool
 
