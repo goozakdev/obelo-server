@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -729,19 +730,20 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSubtitleFormats []string) decisionResponse {
 	// The streamUrl depends on the tier (ADR-0004): direct play is a progressive
 	// byte-range stream; directStream (remux) and transcode are an HLS playlist the
-	// client loads with hls.js / native HLS. On the HLS tiers, when the File offers
-	// at least one deliverable text subtitle, the client is pointed at a MASTER
-	// playlist (one video rendition + an in-band SUBTITLES group, ADR-0020 / the
-	// ADR-0004 amendment) instead of the bare media playlist; with no deliverable
-	// text subtitle the media playlist is served directly, unchanged.
+	// client loads with hls.js / native HLS. On the HLS tiers the client is pointed
+	// at a MASTER playlist (one video rendition, ADR-0004 amendment) when the session
+	// is demuxed, offers a deliverable text subtitle (ADR-0020), or copies HEVC as
+	// fMP4 (ADR-0024); otherwise the bare media playlist is served directly.
 	streamURL := APIPrefix + "/sessions/" + sessionID + "/stream"
 	if d.Tier != playback.TierDirectPlay {
 		file := playbackHLSPlaylist
 		// The client is pointed at the MASTER playlist when the session carries an
 		// in-band group: a demuxed multi-audio AUDIO group (audio-streams/03) and/or a
-		// deliverable text SUBTITLES group (ADR-0020). With neither, the bare video media
-		// playlist is served directly, unchanged.
-		if playback.IsDemuxed(d) || hasDeliverableTextSubtitle(d.Subtitles) {
+		// deliverable text SUBTITLES group (ADR-0020), or when the video is copied HEVC
+		// fMP4 (ADR-0024), whose variant needs CODECS/VIDEO-RANGE only a master carries
+		// (with no AUDIO group unless demuxed). Otherwise the bare video media playlist
+		// is served directly, unchanged.
+		if playback.IsDemuxed(d) || hasDeliverableTextSubtitle(d.Subtitles) || d.UsesFMP4() {
 			file = playbackHLSMaster
 		}
 		streamURL = APIPrefix + "/sessions/" + sessionID + "/hls/" + file
@@ -1514,7 +1516,7 @@ func handleSessionMasterHLS(deps Deps, sessionID string) http.HandlerFunc {
 			VideoRange: actx.VideoRange,
 		}
 		if actx.FMP4 {
-			variant.Codecs = masterVideoCodecs(actx.VideoCodec)
+			variant.Codecs = masterVideoCodecs(actx.VideoCodec, actx.VideoProfile, actx.VideoLevel, actx.AudioCodec)
 		}
 		data := audio.MasterPlaylist(playbackHLSPlaylist, variant, masterAudioRenditions(actx.Renditions), subRends)
 		writeHLSSubtitle(w, playbackHLSMaster, data, true)
@@ -1522,20 +1524,30 @@ func handleSessionMasterHLS(deps Deps, sessionID string) http.HandlerFunc {
 }
 
 // masterVideoCodecs builds the CODECS attribute for a copied-HEVC fMP4 master's
-// video variant (ADR-0024): the RFC 6381 HEVC codec string paired with the AAC audio
-// the renditions carry (every rendition transcodes to AAC). Safari requires CODECS to
-// accept an HEVC fMP4 variant, and it must name the hvc1 sample-entry brand the
-// transcode forces (-tag:v hvc1). The precise HEVC profile/level is not stored, so a
-// generic Main-profile string is used — Safari validates the brand against the init
-// segment and is lenient on the level. A non-HEVC codec (defensive) yields "" so no
-// CODECS is emitted rather than a wrong one.
-func masterVideoCodecs(videoCodec string) string {
+// video variant (ADR-0024): the RFC 6381 HEVC codec string for the stream's real
+// profile and level, plus the codec of the audio the variant actually delivers
+// (audioCodec, "" omits it rather than naming one we are unsure of). Safari requires
+// CODECS to accept an HEVC fMP4 variant, validates it against the init segment, and
+// the brand must be the hvc1 sample entry the transcode forces (-tag:v hvc1). Main 10
+// is hvc1.2.4, Main hvc1.1.6; an unprobed level falls back to 5.1 (153) and an
+// unrecognized profile to Main. A non-HEVC codec (defensive) yields "" so no CODECS is
+// emitted rather than a wrong one.
+func masterVideoCodecs(videoCodec, profile string, level int, audioCodec string) string {
 	if !strings.EqualFold(strings.TrimSpace(videoCodec), "hevc") {
 		return ""
 	}
-	// hvc1.1.6.L153.B0 = HEVC Main profile, level 5.1 — a broadly-compatible generic;
-	// mp4a.40.2 = AAC-LC (the audio renditions' output).
-	return "hvc1.1.6.L153.B0,mp4a.40.2"
+	prefix := "hvc1.1.6"
+	if strings.EqualFold(strings.TrimSpace(profile), "Main 10") {
+		prefix = "hvc1.2.4"
+	}
+	if level <= 0 {
+		level = 153
+	}
+	codecs := fmt.Sprintf("%s.L%d.B0", prefix, level)
+	if audioCodec != "" {
+		codecs += "," + audioCodec
+	}
+	return codecs
 }
 
 // masterAudioRenditions maps the session's demuxed audio Streams to master-playlist

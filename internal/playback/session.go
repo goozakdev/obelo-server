@@ -59,6 +59,11 @@ type Session struct {
 	// ADR-0024). The demuxed audio-rendition runtimes read it to name their .m4s
 	// segments + init segment so they share the video variant's container.
 	FMP4 bool
+	// Demuxed records IsDemuxed(Decision) at negotiation: the video variant is
+	// video-only with one in-band audio rendition per Stream. It is decided once so the
+	// master, the streamUrl and the audio runtimes cannot disagree (a remux-selected
+	// multi-audio session is NOT demuxed even though its File has 2+ audio Streams).
+	Demuxed bool
 	// AudioStreamID is the id of the resolved audio Stream the Decision reported (the
 	// negotiated default: preferred language → default disposition → first). For a
 	// DEMUXED multi-audio session it marks which in-band rendition the master playlist
@@ -466,6 +471,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		Tier:          d.Tier,
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),
+		Demuxed:       IsDemuxed(d),
 		AudioStreamID: d.AudioStream.ID,
 		Subtitles:     d.Subtitles,
 		UserCeiling:   d.UserCeiling,

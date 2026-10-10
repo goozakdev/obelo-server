@@ -1837,13 +1837,45 @@ type SessionAudioContext struct {
 	// FRAME-RATE. Zero values omit the attributes (correct for SDR).
 	VideoRange string
 	FrameRate  float64
+	// VideoProfile / VideoLevel are the probed codec profile name ("Main 10") and
+	// level_idc, so the master's CODECS names the real stream. Zero values when the
+	// probe failed.
+	VideoProfile string
+	VideoLevel   int
+	// AudioCodec is the RFC 6381 id of the audio the video variant's CODECS must name:
+	// "mp4a.40.2" for a demuxed session (every rendition is AAC), the source codec's id
+	// for a single-audio remux that copies it muxed, "" when unknown (omitted rather
+	// than guessed).
+	AudioCodec string
+}
+
+// audioCodecRFC6381 maps a source audio codec name to its RFC 6381 id, "" when there
+// is no id we are sure of.
+func audioCodecRFC6381(codec string) string {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "aac":
+		return "mp4a.40.2"
+	case "eac3":
+		return "ec-3"
+	case "ac3":
+		return "ac-3"
+	case "mp3":
+		return "mp4a.40.34"
+	case "opus":
+		return "Opus"
+	case "flac":
+		return "fLaC"
+	case "alac":
+		return "alac"
+	}
+	return ""
 }
 
 // SessionAudioContext resolves the owner-checked demuxed-audio context for an HLS
 // session, mirroring SessionSubtitleContext's ownership + HLS gates
 // (ErrSessionNotFound for unknown/foreign/ended, ErrNotHLS for direct play). It
-// loads the played File and, when it carries 2+ audio Streams, builds the rendition
-// list (labels + the resolved default). A missing Title/File is a store.ErrNotFound
+// loads the played File and, when the Session was recorded as demuxed, builds the
+// rendition list (labels + the resolved default). A missing Title/File is a store.ErrNotFound
 // the api renders as 404.
 func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioContext, error) {
 	sess, ok := s.sessions.Get(sessionID)
@@ -1861,13 +1893,14 @@ func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioCon
 	if !ok {
 		return SessionAudioContext{}, store.ErrNotFound
 	}
-	if audioStreamCount(file) < 2 {
-		// Single-audio (or silent) File: muxed, no AUDIO group.
+	demuxed := sess.Demuxed
+	if !demuxed && !sess.FMP4 {
+		// Muxed (single-audio, silent or remux-selected) File: no AUDIO group.
 		return SessionAudioContext{Demuxed: false}, nil
 	}
 	var rends []AudioRenditionInfo
 	for _, st := range file.Streams {
-		if st.Kind != "audio" {
+		if st.Kind != "audio" || !demuxed {
 			continue
 		}
 		lang := audio.NormalizeLang(st.Language)
@@ -1895,7 +1928,7 @@ func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioCon
 		}
 	}
 	ctx := SessionAudioContext{
-		Demuxed:    true,
+		Demuxed:    demuxed,
 		Renditions: rends,
 		FMP4:       sess.FMP4,
 		VideoCodec: videoCodec,
@@ -1916,8 +1949,26 @@ func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioCon
 		} else {
 			ctx.VideoRange = traits.VideoRange
 			ctx.FrameRate = traits.FrameRate
+			ctx.VideoProfile = traits.Profile
+			ctx.VideoLevel = traits.Level
 		}
 	}
+	switch {
+	case demuxed:
+		ctx.AudioCodec = "mp4a.40.2"
+	case sess.Tier == TierDirectStream:
+		// A muxed remux copies one audio into the video variant: the selected Stream
+		// (remux-selected multi-audio) or the File's only one. (A seek realignment
+		// re-encodes it to AAC, which the playlist cannot know ahead.)
+		for _, st := range file.Streams {
+			if st.Kind == "audio" && (sess.AudioStreamID == "" || st.ID == sess.AudioStreamID) {
+				ctx.AudioCodec = audioCodecRFC6381(st.Codec)
+				break
+			}
+		}
+	}
+	// A muxed video-copy transcode's audio is planned from the client profile
+	// (copy or AAC), which the session does not keep: AudioCodec stays "".
 	return ctx, nil
 }
 

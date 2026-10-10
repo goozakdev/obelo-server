@@ -19,6 +19,8 @@ import (
 //     ineligible and silently never loads (the nothing-plays Safari bug on a 4K
 //     HDR remux).
 //   - FrameRate: the stream's average frame rate (e.g. 23.976), 0 when unknown.
+//   - Profile / Level: the codec profile name ("Main", "Main 10") and level_idc
+//     (e.g. 153 = 5.1) that name the stream in the master's RFC 6381 CODECS.
 //
 // These are never written to the scan-time store — no File row carries them —
 // so they are probed per session instead, a header-only ffprobe, cheap even on a
@@ -26,6 +28,8 @@ import (
 type VideoTraits struct {
 	VideoRange string
 	FrameRate  float64
+	Profile    string
+	Level      int
 }
 
 // ProbeVideoTraits reads the first video stream's color transfer + average frame
@@ -40,7 +44,7 @@ func ProbeVideoTraits(ctx context.Context, ffprobeBin, path string) (VideoTraits
 	out, err := exec.CommandContext(ctx, bin,
 		"-v", "error",
 		"-select_streams", "v:0",
-		"-show_entries", "stream=color_transfer,avg_frame_rate",
+		"-show_entries", "stream=color_transfer,avg_frame_rate,profile,level",
 		"-of", "default=noprint_wrappers=1",
 		path,
 	).Output()
@@ -60,6 +64,12 @@ func ProbeVideoTraits(ctx context.Context, ffprobeBin, path string) (VideoTraits
 				t.VideoRange = "PQ"
 			case "arib-std-b67":
 				t.VideoRange = "HLG"
+			}
+		case "profile":
+			t.Profile = val
+		case "level":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				t.Level = n
 			}
 		case "avg_frame_rate":
 			// ffprobe reports a rational ("24000/1001") or "0/0" when unknown.
