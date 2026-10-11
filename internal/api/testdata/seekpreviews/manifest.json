@@ -1,0 +1,12 @@
+{
+  "intervalMs": 10000,
+  "frameWidth": 320,
+  "frameHeight": 180,
+  "columns": 10,
+  "rows": 8,
+  "frameCount": 150,
+  "sheets": [
+    "/api/v1/stream/exampleStreamToken/seekPreviews/0.jpg",
+    "/api/v1/stream/exampleStreamToken/seekPreviews/1.jpg"
+  ]
+}

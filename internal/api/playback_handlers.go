@@ -248,6 +248,9 @@ type decisionResponse struct {
 	// not fail a negotiation the client can act on.
 	StreamToken          string `json:"streamToken,omitempty"`
 	StreamTokenExpiresAt string `json:"streamTokenExpiresAt,omitempty"`
+	// SeekPreviews is the File's Seek preview manifest (ADR-0070), OMITTED entirely
+	// when the File has none. A pointer so omitempty applies.
+	SeekPreviews *seekPreviewsJSON `json:"seekPreviews,omitempty"`
 }
 
 // --- handlers ---------------------------------------------------------------

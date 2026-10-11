@@ -443,6 +443,14 @@ _Avoid_: Intro provider, Segment provider.
 The Server's own work of finding Intros and Credits by comparing the sound of a Show's episodes with each other. Runs only when nothing is transcoding, gives way the moment something starts, and never counts against the transcode cap. Not a Plugin: it needs the media itself ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
 _Avoid_: Fingerprinting (the technique, not the job), Intro detection (it finds Credits too), Analysis.
 
+**Seek preview**:
+A small still picture of a File at a point in time. A player shows one above the seek bar while someone scrubs, so they can see where they would land. Belongs to the File, not the Title: two Editions have two independent sets, and a replaced File loses its set. Exists only for video in Movie and TV Libraries — never for music or an Online item. A Linked Library's Seek previews are the origin Server's, passed through the Relay, never made locally. Made ahead of time; a File that has none yet simply shows no picture. Seen only while playing — streamed with the Playback session, or carried inside a download made after they existed.
+_Avoid_: Thumbnail (taken by Artwork candidates and Online items), Trickplay, BIF, Sprite, Scrub image, Preview (a Marker kind).
+
+**Seek preview generation**:
+The Server's own background work of making a File's Seek previews from its video. Per-library, on by default for Movie and TV Libraries and absent for music.
+_Avoid_: Trickplay generation, Thumbnailing.
+
 **Online source**:
 Something outside the household a person can browse and watch from without any of it becoming the Server's — YouTube is one. It appears as one tile on the home screen for each User it is granted to, and opening it shows its Online rows and its own search. It is not a Library and touches nothing in the catalog: never in global search, Collections, Playlists or the Home rows, never shared over a Link, and nothing of it is kept — no listing, no watch state, no resume position. A User with a Rating ceiling is never granted one, because nobody in the household chose what is in it. ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
 _Avoid_: Channel (a YouTube channel is a row here), Remote source (Remote is a role), Streaming service, Virtual library, Section.

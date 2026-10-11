@@ -97,9 +97,9 @@ Four credential transports, each honored only where stated:
 
    A response only ever sets the name belonging to its own listener; requests are accepted under either, plus the pre-split name `ms_media` (read for compatibility, never written, expires on its own). **The split is load-bearing, not cosmetic.** A cookie jar is partitioned by neither scheme nor port, so while both listeners wrote one name at one path they contended for a single jar entry — and [RFC 6265bis §5.7](https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis) ("leave secure cookies alone", implemented by every current browser) resolves that contention by discarding the *non-secure* origin's `Set-Cookie`. One HTTPS login therefore broke browser media on the plain-HTTP origin permanently and silently: the plain listener kept issuing a correct cookie, the browser kept throwing it away, every `<img>`/`<video>` `401`ed, and the rest of the page kept working on its origin-scoped bearer. Logging in again over HTTP could not fix it — that was the write being refused.
 3. **`?token=` query param**: honored by **exactly one** endpoint — `GET /files/{id}/download` (external players fed a `.xspf` can send neither header nor cookie). The URL-borne token is an accepted tradeoff there; it is still DB-validated and revocable.
-4. **Stream token** — the **third media credential**, alongside the bearer and the media cookie ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). A separate secret, carried in the URL **path**, honored **only** by the two routes built for it: `GET /stream/{streamToken}/stream` and `GET /stream/{streamToken}/hls/{file}` (both also answer `HEAD`, and the subtree answers CORS — see the paragraph under the Session lifecycle table). Gated by the **`streamToken`** feature flag. Its scope is the whole point of it, so state it in the same breath as the mechanism:
+4. **Stream token** — the **third media credential**, alongside the bearer and the media cookie ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). A separate secret, carried in the URL **path**, honored **only** by the three routes built for it: `GET /stream/{streamToken}/stream`, `GET /stream/{streamToken}/hls/{file}` and `GET /stream/{streamToken}/seekPreviews/{n}.jpg` (Seek previews, below; all three also answer `HEAD`, and the subtree answers CORS — see the paragraph under the Session lifecycle table). Gated by the **`streamToken`** feature flag. Its scope is the whole point of it, so state it in the same breath as the mechanism:
    - **One session.** It authorises the media artifacts of exactly one Playback session — not the JSON API, not metadata, not another session, not another User's session.
-   - **Read-only.** It reaches only the two media routes, read-only: `GET`, plus `HEAD` (headers, no body) and the CORS `OPTIONS` preflight; any other method is `405` before the token is even examined. There is no token-authenticated progress report, session delete, or mint.
+   - **Read-only.** It reaches only those three media routes, read-only: `GET`, plus `HEAD` (headers, no body) and the CORS `OPTIONS` preflight; any other method is `405` before the token is even examined. There is no token-authenticated progress report, session delete, or mint.
    - **Expiring.** 4 hours from minting, reported as `streamTokenExpiresAt`.
    - **Revoked by `DELETE /sessions/{id}`** — and by the idle reaper, which is the same cascade. Whichever comes first, the token or the session, kills both.
    - **Not an account token.** It is a different table and a different lookup: a stream token is refused as a bearer everywhere, and a bearer pasted into the path is refused here. Minting one always requires a bearer.
@@ -679,7 +679,8 @@ Negotiates a Capability profile → picks a tier ([ADR-0003](./adr/0003-three-ti
                    "format"?: "vtt|srt|ass" } ],
   "estimatedBitrate": 112023,
   "streamToken"?: "opaque-256-bit-secret",
-  "streamTokenExpiresAt"?: "2026-08-03T14:00:00Z"
+  "streamTokenExpiresAt"?: "2026-08-03T14:00:00Z",
+  "seekPreviews"?: { "intervalMs": 10000, "frameWidth": 320, "frameHeight": 180, "columns": 10, "rows": 8, "frameCount": 150, "sheets": [ "…/0.jpg", "…/1.jpg" ] }
 }
 ```
 
@@ -758,6 +759,41 @@ A new decision is required only when constraints change (e.g. bandwidth drop →
 #### GET /files/{id}/download — [Public] (bearer **or `?token=`**)
 
 Sessionless original bytes ("Open in VLC"), Range-capable, no Playback session. **Access-scoped like browse**: the caller's Scope is applied to the Title that owns the File, in both dimensions (Library grant *and* Rating ceiling), so a Member cannot fetch bytes they could not browse to. Unknown id, out-of-scope File, orphaned File, and Missing File all return the **identical** `404 "file not found"` — the refusal must not distinguish "not yours" from "does not exist" (§ "404, not 403"); on-disk unreadable → `404 "file unavailable"`.
+
+#### Seek previews — frozen contract ([ADR-0070](./adr/0070-seek-previews-are-pre-generated-tile-sheets-delivered-with-the-playback-session.md))
+
+A **Seek preview** is a still shown above the seek bar while scrubbing. They are generated ahead of time as JPEG **tile sheets**; a client fetches the sheets and crops locally. Fixed in v1: one frame every **10 s**, **320 px** wide, height following the display aspect (HDR tone-mapped to SDR) — but a client reads every value from the manifest, never assumes them. A checked-in fixture, `internal/api/testdata/seekpreviews/` (`manifest.json` + `0.jpg`, `1.jpg`), is pinned by a test; the example below is that fixture.
+
+**(a) In the playback decision.** `POST /titles/{id}/playback` returns an optional `seekPreviews` object, **omitted entirely** (not `null`, not empty) when the File has none yet, or none can exist (music, Online items). The library toggle governs *generation* only: a File that already has a set keeps `seekPreviews` after the toggle is turned off. Test its presence.
+
+**(b) Manifest.**
+
+```json
+{
+  "intervalMs": 10000,
+  "frameWidth": 320,
+  "frameHeight": 180,
+  "columns": 10,
+  "rows": 8,
+  "frameCount": 150,
+  "sheets": [
+    "/api/v1/stream/exampleStreamToken/seekPreviews/0.jpg",
+    "/api/v1/stream/exampleStreamToken/seekPreviews/1.jpg"
+  ]
+}
+```
+
+`intervalMs` is the time between frames; `frameWidth`/`frameHeight` are one frame in pixels; `columns`×`rows` is the grid of one sheet; `frameCount` is the number of frames in the whole set; `sheets` is the ordered list of sheet URLs (sheet *n* is `sheets[n]`; there are ceil(`frameCount` ÷ (`columns`×`rows`)) of them). Every sheet is `columns×frameWidth` by `rows×frameHeight` pixels.
+
+**(c) Session sheet URLs.** In a decision the URLs are `/api/v1/stream/<stream token>/seekPreviews/<n>.jpg` (`n` from 0), served under the same [Stream token] rules as the other `/stream/…` routes (§ Session lifecycle): same CORS, same single byte-identical `404` for every refusal. Access, Rating ceiling and the Linked-Library relay come from the session; a Linked Library's previews are always the origin's. A decision whose stream token failed to mint carries no `seekPreviews` (the URLs need the token); the client simply shows no picture.
+
+**(d) Bearer download route — [Public] (bearer header only; no `?token=`, which stays exclusive to `/files/{id}/download`), downloads only.** `GET /api/v1/files/{id}/seekPreviews` → `200` with the **same manifest shape**, `sheets` being `/api/v1/files/{id}/seekPreviews/<n>.jpg`. It has the same Scope check as `GET /files/{id}/download`, and every refusal — unknown id, out-of-scope, orphaned, Missing File — **and "no previews yet"** is that route's single identical `404 "file not found"`; a sheet file unreadable on disk is `404 "file unavailable"`, as for `/files/{id}/download`. A client that downloads a File fetches the sheets after the bytes and stores them with the download; a download made before its File had previews is not topped up later.
+
+**(e) Client lookup rule.** For a position `t` (ms): `index = floor(t / intervalMs)`, clamped to `[0, frameCount-1]`; `sheet = floor(index / (columns×rows))`; `cell = index mod (columns×rows)`, row-major: `col = cell mod columns`, `row = floor(cell / columns)`; the frame is the `frameWidth×frameHeight` rectangle at `(col×frameWidth, row×frameHeight)` in `sheets[sheet]`. Frame *i* shows roughly time *i×intervalMs* (the nearest keyframe at or before it, so it may be a few seconds early; the seek itself still lands on `t`). In the example, `t = 1,495,000` → index 149 → sheet 1, cell 69 → column 9, row 6.
+
+**(f) Partial last sheet.** The last sheet may hold fewer than `columns×rows` frames; it still has the full sheet dimensions, and its unused cells are **unspecified** (never index into them; the clamp in (e) guarantees you do not). In the example sheet 1 holds frames 80–149, 70 of 80 cells.
+
+Clients fetch lazily: on the first scrub, the sheet needed and its neighbour. Any change to this contract after the freeze is made by the server and announced to the web, Apple and Android clients.
 
 ### 3.7 Collections, Playlists, Watchlist
 
