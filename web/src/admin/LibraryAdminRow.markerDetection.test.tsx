@@ -9,8 +9,9 @@ import type { Library } from "../api/types";
 // Library, or a linked TV Library, has no such item at all; on a host without
 // ffmpeg it shows as unavailable, not on.
 
-const { getScanStatus, getMarkerDetection, setMarkerDetection } = vi.hoisted(() => ({
+const { getScanStatus, getMarkerDetection, setMarkerDetection, getSeekPreviews } = vi.hoisted(() => ({
   getScanStatus: vi.fn(),
+  getSeekPreviews: vi.fn(),
   getMarkerDetection: vi.fn(),
   setMarkerDetection: vi.fn(),
 }));
@@ -21,6 +22,7 @@ vi.mock("../api/client", async () => {
     ...actual,
     apiClient: {
       getScanStatus: (...a: unknown[]) => getScanStatus(...a),
+      getSeekPreviews: (...a: unknown[]) => getSeekPreviews(...a),
       getMarkerDetection: (...a: unknown[]) => getMarkerDetection(...a),
       setMarkerDetection: (...a: unknown[]) => setMarkerDetection(...a),
     },
@@ -50,6 +52,8 @@ beforeEach(() => {
     titlesFound: 0,
     filesFound: 0,
   });
+  // A movie Library's Seek preview panel reads its own status; not under test here.
+  getSeekPreviews.mockReset().mockRejectedValue(new Error("not under test"));
   getMarkerDetection.mockReset().mockResolvedValue({ enabled: true, available: true });
   setMarkerDetection.mockReset().mockResolvedValue({ enabled: false, available: true });
 });

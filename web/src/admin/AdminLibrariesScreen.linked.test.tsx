@@ -34,6 +34,8 @@ vi.mock("../api/client", async () => {
     apiClient: {
       listLibraries: (...a: unknown[]) => listLibraries(...a),
       getScanStatus: (...a: unknown[]) => getScanStatus(...a),
+      // Each row's Seek preview panel reads its own status; not under test here.
+      getSeekPreviews: () => Promise.reject(new Error("not under test")),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
       listLinks: (...a: unknown[]) => listLinks(...a),
     },

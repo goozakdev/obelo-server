@@ -153,6 +153,7 @@ import type {
   GroupMappingView,
   ResyncResult,
   MarkerDetection,
+  SeekPreviewStatus,
   RedirectSignInProvidersView,
   RedirectSignInCallbackRequest,
   MarkerAutoSkip,
@@ -2532,6 +2533,66 @@ export class ApiClient {
       `/libraries/${encodeURIComponent(libraryId)}/marker-detection`,
       { method: "PUT", body: { enabled }, signal },
     );
+  }
+
+  /** `GET /api/v1/libraries/{id}/seek-previews` (Admin) — the Seek preview
+   * toggle and coverage of a Movie or TV Library (ADR-0070). 404 for any other
+   * Library: it has no toggle at all. */
+  getSeekPreviews(libraryId: string, signal?: AbortSignal): Promise<SeekPreviewStatus> {
+    return this.request<SeekPreviewStatus>(
+      `/libraries/${encodeURIComponent(libraryId)}/seek-previews`,
+      { signal },
+    );
+  }
+
+  /** `PUT /api/v1/libraries/{id}/seek-previews` (Admin) — turn Seek preview
+   * generation on or off; answers the saved status. Off keeps existing sets. */
+  setSeekPreviews(
+    libraryId: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<SeekPreviewStatus> {
+    return this.request<SeekPreviewStatus>(
+      `/libraries/${encodeURIComponent(libraryId)}/seek-previews`,
+      { method: "PUT", body: { enabled }, signal },
+    );
+  }
+
+  /** `DELETE /api/v1/libraries/{id}/seek-previews` (Admin) — delete every Seek
+   * preview of the Library AND turn generation off; answers the new status. */
+  deleteSeekPreviews(libraryId: string, signal?: AbortSignal): Promise<SeekPreviewStatus> {
+    return this.request<SeekPreviewStatus>(
+      `/libraries/${encodeURIComponent(libraryId)}/seek-previews`,
+      { method: "DELETE", signal },
+    );
+  }
+
+  /** `POST /api/v1/libraries/{id}/seek-previews/retry` (Admin) — queue one
+   * failed File again, or every failed File of the Library when no id is given.
+   * 202 as soon as it is queued. */
+  retrySeekPreviews(libraryId: string, fileId?: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/libraries/${encodeURIComponent(libraryId)}/seek-previews/retry`,
+      { method: "POST", body: fileId ? { fileId } : {}, signal },
+    );
+  }
+
+  /** `POST /api/v1/titles/{id}/generate-seek-previews` (Admin) — "generate seek
+   * previews now" for a Movie or Episode; 202 as soon as it is queued. */
+  generateTitleSeekPreviews(titleId: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/titles/${encodeURIComponent(titleId)}/generate-seek-previews`, {
+      method: "POST",
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/shows/{id}/generate-seek-previews` (Admin) — the same for
+   * every Episode of one Show. */
+  generateShowSeekPreviews(showId: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/shows/${encodeURIComponent(showId)}/generate-seek-previews`, {
+      method: "POST",
+      signal,
+    });
   }
 
   /** `GET /api/v1/me/marker-auto-skip` — the caller's own auto-skip setting per

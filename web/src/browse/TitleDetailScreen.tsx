@@ -167,6 +167,17 @@ function Detail({
   // after appending / inserting this Title, so enqueueing gives feedback without
   // leaving the page.
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  // "Generate seek previews now" (ADR-0070): queued, never awaited — the notice
+  // says it has started, or why it could not (no ffmpeg → 503).
+  const [seekPreviewsNotice, setSeekPreviewsNotice] = useState<string | null>(null);
+  async function generateSeekPreviews() {
+    try {
+      await apiClient.generateTitleSeekPreviews(title.id);
+      setSeekPreviewsNotice("Generating seek previews in the background.");
+    } catch (err) {
+      setSeekPreviewsNotice(errorMessage(err));
+    }
+  }
   // Why the last queue add was refused (Online items and Titles never share a Queue).
   const [queueRefusal, setQueueRefusal] = useState<string | null>(null);
   // "Add to watchlist" (watchlist 01): busy + inline result of the POST that adds
@@ -576,8 +587,21 @@ function Detail({
               // from its Show detail, not this per-Title page (ADR-0030).
               onScan={isAdmin && title.kind === "movie" ? onScan : undefined}
               scanning={scanning}
+              // Seek previews are made for local video only: a Movie or an
+              // Episode, never a mirror (its previews come from the origin).
+              onGenerateSeekPreviews={
+                isAdmin && !marks.linked && (title.kind === "movie" || title.kind === "episode")
+                  ? () => void generateSeekPreviews()
+                  : undefined
+              }
             />
           </div>
+
+          {seekPreviewsNotice && (
+            <p className="status status-ok" data-testid="seek-previews-notice" role="status">
+              {seekPreviewsNotice}
+            </p>
+          )}
 
           {scanMessage && (
             <p className="status status-ok" data-testid="scan-notice" role="status">
@@ -935,6 +959,7 @@ function OverflowMenu({
   onAddToCollection,
   onScan,
   scanning,
+  onGenerateSeekPreviews,
 }: {
   isAdmin: boolean;
   onAddToQueue: () => void;
@@ -945,6 +970,8 @@ function OverflowMenu({
   /** Present only for an Admin on a Movie: a Targeted scan of its folder. */
   onScan?: () => void;
   scanning: boolean;
+  /** Present only for an Admin on a local Movie or Episode (ADR-0070). */
+  onGenerateSeekPreviews?: () => void;
 }) {
   return (
     <OverflowPopover>
@@ -1002,6 +1029,18 @@ function OverflowMenu({
               onClick={pick(onScan)}
             >
               {scanning ? "Scanning…" : "Scan"}
+            </button>
+          )}
+          {onGenerateSeekPreviews && (
+            <button
+              className="overflow-menu-item generate-seek-previews-item"
+              type="button"
+              role="menuitem"
+              data-testid="generate-seek-previews-item"
+              title="Make scrub thumbnails for this title now"
+              onClick={pick(onGenerateSeekPreviews)}
+            >
+              Generate seek previews now
             </button>
           )}
         </>

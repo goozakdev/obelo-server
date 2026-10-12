@@ -3401,6 +3401,30 @@ export interface MarkerDetection {
   available: boolean;
 }
 
+/** One File whose Seek preview generation failed (ADR-0070). `reason` is the
+ * server's own words, e.g. why an HDR File could not be tone-mapped. */
+export interface SeekPreviewFailure {
+  fileId: string;
+  titleId: string;
+  /** "Title (Year)" for a Movie, "Show — S01E02 · Episode title" for an Episode. */
+  label: string;
+  path: string;
+  reason: string;
+}
+
+/** A Movie or TV Library's Seek preview status (ADR-0070): the generation
+ * toggle plus how much of the Library is covered. Music has none (404). */
+export interface SeekPreviewStatus {
+  enabled: boolean;
+  /** False on a host with no usable ffmpeg: generation does not run at all. */
+  available: boolean;
+  /** Present, eligible video Files of the Library. */
+  eligible: number;
+  /** Of those, Files with a fresh, ready set. */
+  ready: number;
+  failed: SeekPreviewFailure[];
+}
+
 /** One tile on Home: an enabled Online source (ADR-0068), by the name its Plugin
  * gave it. `iconUrl` is the Server's own path to the tile image, or null when the
  * package carried no icon (the client draws a generic tile with the name). */

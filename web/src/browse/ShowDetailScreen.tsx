@@ -21,7 +21,7 @@ import { useTargetedScan } from "./useTargetedScan";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
 import { useLibraryProvider } from "./librariesContext";
-import LinkedMark, { linkedRowClass } from "./LinkedMark";
+import LinkedMark, { isLinked, linkedRowClass } from "./LinkedMark";
 import EpisodeActionsMenu from "./EpisodeActionsMenu";
 import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
@@ -83,6 +83,17 @@ export default function ShowDetailScreen() {
       setMarkersNotice("Detecting intros and credits in the background.");
     } catch (err) {
       setMarkersNotice(errorMessage(err));
+    }
+  }
+  // "Generate seek previews now" (ADR-0070): queued the same way; a refusal (no
+  // ffmpeg → 503) shows in the same notice.
+  const [seekPreviewsNotice, setSeekPreviewsNotice] = useState<string | null>(null);
+  async function generateSeekPreviews(id: string) {
+    try {
+      await apiClient.generateShowSeekPreviews(id);
+      setSeekPreviewsNotice("Generating seek previews in the background.");
+    } catch (err) {
+      setSeekPreviewsNotice(errorMessage(err));
     }
   }
   // The Show summary carries the mirror pair itself; the providing Server's name
@@ -428,6 +439,13 @@ export default function ShowDetailScreen() {
                     onDetectMarkers={
                       isAdmin ? () => void detectMarkers(state.data.show.id) : undefined
                     }
+                    /* "Generate seek previews now" (ADR-0070), Admin-only and
+                       never for a mirror, whose previews come from its origin. */
+                    onGenerateSeekPreviews={
+                      isAdmin && !isLinked(state.data.show)
+                        ? () => void generateSeekPreviews(state.data.show.id)
+                        : undefined
+                    }
                     /* The file matcher (ADR-0044), Admin-only. Reachable from
                        here as well as from the Needs Fixing queue, because an
                        Admin often knows a Show is mis-sorted before anything
@@ -441,6 +459,11 @@ export default function ShowDetailScreen() {
                 {markersNotice && (
                   <p className="status status-ok" data-testid="markers-notice" role="status">
                     {markersNotice}
+                  </p>
+                )}
+                {seekPreviewsNotice && (
+                  <p className="status status-ok" data-testid="seek-previews-notice" role="status">
+                    {seekPreviewsNotice}
                   </p>
                 )}
                 {scanMessage && (
@@ -665,6 +688,7 @@ function ShowOverflowMenu({
   onScan,
   scanning,
   onDetectMarkers,
+  onGenerateSeekPreviews,
   matcherPath,
 }: {
   onAddToQueue: () => void;
@@ -674,6 +698,8 @@ function ShowOverflowMenu({
   scanning: boolean;
   /** Present only for an Admin: "detect markers now" for this Show (ADR-0065). */
   onDetectMarkers?: () => void;
+  /** Present only for an Admin on a local Show: "generate seek previews now" (ADR-0070). */
+  onGenerateSeekPreviews?: () => void;
   /** Present only for an Admin: the file matcher for this Show (ADR-0044). */
   matcherPath?: string;
 }) {
@@ -734,6 +760,18 @@ function ShowOverflowMenu({
               onClick={pick(onDetectMarkers)}
             >
               Detect markers now
+            </button>
+          )}
+          {onGenerateSeekPreviews && (
+            <button
+              className="overflow-menu-item generate-seek-previews-item"
+              type="button"
+              role="menuitem"
+              data-testid="generate-seek-previews-item"
+              title="Make scrub thumbnails for this show's episodes now"
+              onClick={pick(onGenerateSeekPreviews)}
+            >
+              Generate seek previews now
             </button>
           )}
         </>
