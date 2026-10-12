@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // Seek preview generation (ADR-0070) reads the eligible Files of Movie and TV
@@ -189,6 +190,81 @@ func (db *DB) exists(query string, arg string) error {
 		return fmt.Errorf("store: %w", err)
 	}
 	return nil
+}
+
+// SeekPreviewFailure is one eligible File whose generation failed, as the admin
+// list shows it.
+type SeekPreviewFailure struct {
+	FileID  string
+	TitleID string
+	// Label is "Title (Year)" for a Movie and "Show — S01E02 · Episode title" for an
+	// Episode.
+	Label  string
+	Path   string
+	Reason string
+}
+
+// SeekPreviewCoverage is how much of a Library has Seek previews: its eligible
+// Files, those with a fresh ready set (the record's mtime and size equal the File
+// row's), and the failed ones ordered by label.
+type SeekPreviewCoverage struct {
+	Eligible int
+	Ready    int
+	Failed   []SeekPreviewFailure
+}
+
+// SeekPreviewCoverage counts a Library's eligible Files, whatever its toggle.
+func (db *DB) SeekPreviewCoverage(libraryID string) (SeekPreviewCoverage, error) {
+	files, err := db.SeekPreviewFilesOfLibrary(libraryID)
+	if err != nil {
+		return SeekPreviewCoverage{}, err
+	}
+	cov := SeekPreviewCoverage{Eligible: len(files)}
+	for _, f := range files {
+		switch {
+		case f.Set == nil:
+		case f.Set.Status == SeekPreviewReady:
+			if f.Set.Mtime == f.Mtime && f.Set.SizeBytes == f.SizeBytes {
+				cov.Ready++
+			}
+		case f.Set.Status == SeekPreviewFailed:
+			var (
+				titleID, kind, title, show string
+				year                       sql.NullInt64
+				season, episode            int
+			)
+			err := db.QueryRow(
+				`SELECT t.id, t.kind, t.title, t.year, t.season_number, t.episode_number, COALESCE(sh.title, '')
+				   FROM files f
+				   JOIN editions e ON e.id = f.edition_id
+				   JOIN titles t   ON t.id = e.title_id
+				   LEFT JOIN seasons se ON se.id = t.season_id
+				   LEFT JOIN shows sh   ON sh.id = se.show_id
+				  WHERE f.id = ?`, f.FileID).Scan(&titleID, &kind, &title, &year, &season, &episode, &show)
+			if err != nil {
+				return SeekPreviewCoverage{}, fmt.Errorf("store: labelling seek preview of %q: %w", f.FileID, err)
+			}
+			label := title
+			if kind == "episode" {
+				label = fmt.Sprintf("%s — S%02dE%02d", show, season, episode)
+				if title != "" {
+					label += " · " + title
+				}
+			} else if year.Valid && year.Int64 > 0 {
+				label = fmt.Sprintf("%s (%d)", title, year.Int64)
+			}
+			cov.Failed = append(cov.Failed, SeekPreviewFailure{
+				FileID: f.FileID, TitleID: titleID, Label: label, Path: f.Path, Reason: f.Set.Reason})
+		}
+	}
+	sort.SliceStable(cov.Failed, func(i, j int) bool {
+		a, b := cov.Failed[i], cov.Failed[j]
+		if a.Label != b.Label {
+			return a.Label < b.Label
+		}
+		return a.Path < b.Path
+	})
+	return cov, nil
 }
 
 // SeekPreviewRecord is a record beside the current state of its File row.

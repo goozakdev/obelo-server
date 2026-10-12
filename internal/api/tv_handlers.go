@@ -506,6 +506,18 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 					handleDetectShowMarkers(deps, id)))))(w, r)
 			return
 		}
+		// POST {id}/generate-seek-previews: the Admin's "generate now" for this Show
+		// (ADR-0070), forced and queued ahead of everything waiting.
+		if id, ok := strings.CutSuffix(rest, "/generate-seek-previews"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleGenerateSeekPreviews(deps, id, true)))))(w, r)
+			return
+		}
 		// POST {id}/review: dismiss this Show's needs_review flag (Admin).
 		if id, ok := strings.CutSuffix(rest, "/review"); ok {
 			if id == "" || strings.Contains(id, "/") {

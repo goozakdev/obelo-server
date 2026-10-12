@@ -107,6 +107,9 @@ type entry struct {
 	front   bool
 	force   bool
 	seq     uint64
+	// started is the delete count when the worker took the entry; a Library deleted
+	// since then must not get a set from it.
+	started uint64
 }
 
 // Generator owns the queue and the one worker that drains it.
@@ -123,6 +126,10 @@ type Generator struct {
 	seq     uint64
 	wake    chan struct{}
 	cur     *running
+	// deletes counts DeleteLibrary calls and deletedAt records the count of each
+	// Library's latest, so work that began earlier cannot save a set after it.
+	deletes   uint64
+	deletedAt map[string]uint64
 
 	// sweepMu serializes the janitor with the start of a File's generation, so a
 	// sweep never takes the directory of a File being made for an orphan.
@@ -149,7 +156,7 @@ func New(st Store, ex Extractor, dir string, opts Options) *Generator {
 	if opts.Lane == nil {
 		opts.Lane = &bglane.Lane{}
 	}
-	return &Generator{store: st, ex: ex, dir: dir, opts: opts, wake: make(chan struct{}, 1), sweepWake: make(chan struct{}, 1)}
+	return &Generator{store: st, ex: ex, dir: dir, opts: opts, wake: make(chan struct{}, 1), sweepWake: make(chan struct{}, 1), deletedAt: map[string]uint64{}}
 }
 
 // Dir is where a File's sheets live.
@@ -253,25 +260,57 @@ func (g *Generator) forceAll(files []store.SeekPreviewFile) {
 }
 
 // DeleteLibrary deletes every set and record of a Library's Files, Missing ones
-// included, whatever its toggle. A File of it being generated is stopped first.
+// included, whatever its toggle. Everything of it still waiting is dropped, and a
+// File of it being generated is stopped first; none can save a set afterwards (a
+// forced generation asked for after this returns can).
 func (g *Generator) DeleteLibrary(libraryID string) error {
+	// The Files that can be waiting: the eligible ones (a queued File is one), and
+	// those with a record.
+	files, err := g.store.SeekPreviewFilesOfLibrary(libraryID)
+	if err != nil {
+		return err
+	}
+	ids, err := g.store.SeekPreviewFileIDsOfLibrary(libraryID)
+	if err != nil {
+		return err
+	}
+	of := make(map[string]bool, len(ids)+len(files))
+	for _, id := range ids {
+		of[id] = true
+	}
+	for _, f := range files {
+		of[f.FileID] = true
+	}
 	g.mu.Lock()
+	g.deletes++
+	g.deletedAt[libraryID] = g.deletes
+	kept := g.entries[:0]
+	for _, e := range g.entries {
+		if !of[e.fileID] {
+			kept = append(kept, e)
+		}
+	}
+	g.entries = kept
+	for i, l := range g.libs {
+		if l == libraryID {
+			g.libs = append(g.libs[:i], g.libs[i+1:]...)
+			break
+		}
+	}
 	cur := g.cur
 	g.mu.Unlock()
 	if cur != nil && cur.libraryID == libraryID {
 		cur.cancel()
 		<-cur.done
 	}
-	ids, err := g.store.SeekPreviewFileIDsOfLibrary(libraryID)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := g.remove(id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return RemoveLibrary(g.store, g.dir, libraryID)
+}
+
+// deletedSince reports whether the Library was deleted after the count n.
+func (g *Generator) deletedSince(libraryID string, n uint64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.deletedAt[libraryID] > n
 }
 
 func (g *Generator) push(fileID, addedAt string, front, force bool) {
@@ -341,6 +380,7 @@ func (g *Generator) pick() *entry {
 		return nil
 	}
 	e := g.entries[best]
+	e.started = g.deletes
 	g.entries = append(g.entries[:best], g.entries[best+1:]...)
 	return e
 }
@@ -486,14 +526,38 @@ func (g *Generator) sweep() (stale []string, err error) {
 }
 
 // remove deletes a File's set and record.
-func (g *Generator) remove(fileID string) error {
+func (g *Generator) remove(fileID string) error { return removeSet(g.store, g.dir, fileID) }
+
+// libraryRecords is what deleting a Library's previews needs of the store.
+type libraryRecords interface {
+	SeekPreviewFileIDsOfLibrary(libraryID string) ([]string, error)
+	DeleteSeekPreviewRecord(fileID string) error
+}
+
+// RemoveLibrary deletes, under dir, the set and record of every File of the
+// Library, Missing ones included. It needs no Generator, so it works on a host
+// with no usable ffmpeg, and running it again finishes what a failed run left.
+func RemoveLibrary(st libraryRecords, dir, libraryID string) error {
+	ids, err := st.SeekPreviewFileIDsOfLibrary(libraryID)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := removeSet(st, dir, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeSet(st interface{ DeleteSeekPreviewRecord(string) error }, dir, fileID string) error {
 	if fileID == "" || strings.ContainsAny(fileID, `/\`) || fileID == "." || fileID == ".." {
 		return fmt.Errorf("seekpreview: refusing to delete the set of file id %q", fileID)
 	}
-	if err := os.RemoveAll(g.Dir(fileID)); err != nil {
+	if err := os.RemoveAll(filepath.Join(dir, fileID)); err != nil {
 		return err
 	}
-	return g.store.DeleteSeekPreviewRecord(fileID)
+	return st.DeleteSeekPreviewRecord(fileID)
 }
 
 // handle decides whether a queued File needs a set, and makes it.
@@ -521,7 +585,7 @@ func (g *Generator) handle(ctx context.Context, e *entry) {
 	case !f.Enabled:
 		return
 	}
-	g.generate(ctx, f)
+	g.generate(ctx, f, e.started)
 }
 
 // yield is the safe point: while any Transcode is running, generation waits.
@@ -541,24 +605,32 @@ func (g *Generator) yield(ctx context.Context) error {
 
 // generate makes the set of one File: sheet by sheet, a safe point between each,
 // and the record last, so a set with a record is a whole one.
-func (g *Generator) generate(parent context.Context, f store.SeekPreviewFile) {
+func (g *Generator) generate(parent context.Context, f store.SeekPreviewFile, started uint64) {
 	ctx, cancel := context.WithCancel(parent)
 	cur := &running{fileID: f.FileID, libraryID: f.LibraryID, cancel: cancel, done: make(chan struct{})}
 	g.sweepMu.Lock()
 	g.mu.Lock()
-	g.cur = cur
+	deleted := g.deletedAt[f.LibraryID] > started
+	if !deleted {
+		g.cur = cur
+	}
 	g.mu.Unlock()
 	g.sweepMu.Unlock()
 	defer func() {
 		cancel()
 		g.mu.Lock()
-		g.cur = nil
+		if g.cur == cur {
+			g.cur = nil
+		}
 		g.mu.Unlock()
 		close(cur.done)
 	}()
+	if deleted {
+		return // the Library's previews were deleted after this File was picked
+	}
 
 	set, err := g.build(ctx, f)
-	if err == nil && ctx.Err() == nil && g.changedSince(f) {
+	if err == nil && ctx.Err() == nil && g.changedSince(f) && !g.deletedSince(f.LibraryID, started) {
 		// The File changed under us: the set was cut from the old bytes. Discard it
 		// and make the File again (it has no record now, so it is queued as new).
 		_ = os.RemoveAll(g.Dir(f.FileID))

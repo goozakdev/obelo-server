@@ -306,6 +306,18 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 					handleTargetedScan(deps, "title", id)))))(w, r)
 			return
 		}
+		// POST {id}/generate-seek-previews: the Admin's "generate now" for this Movie
+		// or Episode (ADR-0070), forced and queued ahead of everything waiting.
+		if id, ok := strings.CutSuffix(rest, "/generate-seek-previews"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleGenerateSeekPreviews(deps, id, false)))))(w, r)
+			return
+		}
 		// POST {id}/review: dismiss this Title's needs_review flag — the Admin
 		// confirms the uncertain identity parse is fine (Movie / Episode / Track).
 		if id, ok := strings.CutSuffix(rest, "/review"); ok {

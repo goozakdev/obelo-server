@@ -244,6 +244,12 @@ type Deps struct {
 	// in narrow tests, where no File has previews.
 	SeekPreviews    SeekPreviewReader
 	SeekPreviewsDir string
+	// SeekPreviewGenerator is Seek preview generation, nil on a host with no usable
+	// ffmpeg (GET reports it unavailable; retry and generate-now answer 503; DELETE
+	// still works), and SeekPreviewAdmin
+	// the store behind the admin routes (ADR-0070).
+	SeekPreviewGenerator SeekPreviewGenerator
+	SeekPreviewAdmin     SeekPreviewAdminStore
 
 	// Online lists the Online sources, serves their pages and relays their media
 	// (internal/onlinesource, ADR-0068). Nil in narrow tests, where every

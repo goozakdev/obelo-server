@@ -1583,6 +1583,24 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 					"method not allowed", nil)
 			}
 			return
+		case strings.HasSuffix(rest, "/seek-previews/retry"):
+			// Admin: retry the failed Files of the Library's Seek previews (ADR-0070).
+			requireMethod(http.MethodPost, requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+				handleRetrySeekPreviews(deps, libraryIDOf(rest)))))(w, r)
+			return
+		case strings.HasSuffix(rest, "/seek-previews"):
+			// Admin: read / set / delete the Library's Seek previews (ADR-0070), which
+			// only a local Movie or TV Library has.
+			switch r.Method {
+			case http.MethodGet, http.MethodPut, http.MethodDelete:
+				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+					handleLibrarySeekPreviews(deps, libraryIDOf(rest))))(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT, DELETE")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
+			return
 		case strings.HasSuffix(rest, "/scan"):
 			switch r.Method {
 			case http.MethodPost:

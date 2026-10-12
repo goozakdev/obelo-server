@@ -685,6 +685,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	if markerDetector != nil {
 		markerDetection = markerDetector
 	}
+	// Likewise a nil *Generator must reach the API as a nil interface.
+	var seekPreviewGenerator api.SeekPreviewGenerator
+	if seekPreviews != nil {
+		seekPreviewGenerator = seekPreviews
+	}
 	// The handshake advertises what THIS host can do (ADR-0034 identity + the
 	// feature flags). Built here, after the setup-time resolutions above, so
 	// Metadata.Info() only ever reads already-resolved values — an unauthenticated
@@ -1373,6 +1378,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// Seek preview sets are served whether or not generation is running.
 		SeekPreviews:    db,
 		SeekPreviewsDir: filepath.Join(cfg.DataDir, "seekpreviews"),
+		// Seek preview administration (ADR-0070): nil generation on a host with no
+		// usable ffmpeg.
+		SeekPreviewGenerator: seekPreviewGenerator,
+		SeekPreviewAdmin:     db,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
