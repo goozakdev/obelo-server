@@ -1,22 +1,22 @@
-# DORMANT. As of 2026-09-17 this repository has NO GIT REMOTE — it is a solo,
-# local-only project whose issues live as markdown under .scratch/ and whose gate is
-# `make check`, run by hand. GitHub never sees this file, so nothing here runs, and
-# nothing in the repo may depend on it running.
+# Runs on GitHub Actions (origin is goozakdev/obelo-server) on every push to main and
+# every pull request. The remote hosts code only; issues live as markdown under
+# .scratch/.
 #
-# It exists anyway, and that is the whole point. Seven plugin-system issues (08, 09,
-# 11, 12, 13, 15, 16) each ended with "execution on linux/amd64 is unverified; this
-# should be a CI job", and each of them was right and could do nothing about it. The
-# gate that runs TODAY is `make check-amd64` (a linux/amd64 container on the
-# developer's machine — see the Makefile). This is the half that costs nothing now
-# and closes the gap by itself the day a remote appears: push once, and the same
-# checks start running per commit, on an amd64 runner, without anyone remembering
-# that they should.
+# Why it exists: seven plugin-system issues (08, 09, 11, 12, 13, 15, 16) each ended
+# with "execution on linux/amd64 is unverified; this should be a CI job". This is that
+# job, on an amd64 runner. `make check-amd64` is the local equivalent (a linux/amd64
+# container on the arm64 dev machine — see the Makefile).
 #
-# IF YOU ARE THE ONE ADDING THE REMOTE: nothing below has ever executed, not once.
-# Expect to fix it. `make check` is the contract it is written against, so read the
-# Makefile first and change this file rather than the gate.
+# `make check` is the contract this file is written against. If CI and the gate
+# disagree, read the Makefile first and change this file rather than the gate.
 
 name: check
+
+# One pin for both jobs so they cannot drift. ffmpeg 9.0.x: an unmodified copy of BtbN
+# autobuild-2026-10-12-13-12, mirrored to our own release because BtbN prunes dated builds.
+env:
+  FFMPEG_URL: https://github.com/goozakdev/obelo-server/releases/download/ci-ffmpeg-n9.0.2/ffmpeg-n9.0.2-27-g7e93014c5b-linux64-gpl-9.0.tar.xz
+  FFMPEG_SHA256: 99ac3849c1910e8a2e0dc16da11bbacb2bd6e8c445b5d180e5540cb57871a8bf
 
 on:
   push:
@@ -42,8 +42,16 @@ jobs:
       # its media fixtures with `ffmpeg -f lavfi -i testsrc`, and on a machine without
       # it those tests FAIL rather than skip (measured: 364 of them). The runner image
       # does not reliably carry it. Do not drop this step to save a minute.
+      # Pinned (URL + sha256, see the workflow `env:`) rather than apt: Ubuntu's ffmpeg
+      # 6.1 ffprobe sees no HLS WebVTT subtitle renditions and counts AAC-primed
+      # segments differently, which fails tests that pass on ffmpeg 9.
       - name: ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          curl -fsSL -o ffmpeg.tar.xz "$FFMPEG_URL"
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/ffmpeg"
+          tar -xJf ffmpeg.tar.xz --strip-components=1 -C "$HOME/ffmpeg"
+          echo "$HOME/ffmpeg/bin" >> "$GITHUB_PATH"
 
       # `make check` runs check-web, which FAILS (deliberately, not skips) when
       # web/node_modules is absent. So the toolchain is installed before the gate
@@ -86,7 +94,12 @@ jobs:
           cache: true
 
       - name: ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          curl -fsSL -o ffmpeg.tar.xz "$FFMPEG_URL"
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/ffmpeg"
+          tar -xJf ffmpeg.tar.xz --strip-components=1 -C "$HOME/ffmpeg"
+          echo "$HOME/ffmpeg/bin" >> "$GITHUB_PATH"
 
       - name: Show the architecture under test
         run: |
