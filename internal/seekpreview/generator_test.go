@@ -160,7 +160,13 @@ func start(t *testing.T, g *seekpreview.Generator) {
 // waitFor polls cond (a store or disk read, not a timer on the code under test).
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	waitForWithin(t, 5*time.Second, what, cond)
+}
+
+// waitForWithin is waitFor with its own deadline, for tests that run real ffmpeg.
+func waitForWithin(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)

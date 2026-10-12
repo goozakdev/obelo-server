@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/seekpreview"
 )
@@ -55,6 +56,7 @@ func TestRealFFmpegGeneratesTheSheets(t *testing.T) {
 	if err != nil {
 		t.Skip("no ffmpeg on PATH")
 	}
+	seekpreview.NoRenice(t)
 	f := newFixture(t)
 	f.addFile(t, "libmov", "wide", 205_000, "2024-01-01T00:00:00Z")
 	f.addFile(t, "libmov", "anamorphic", 25_000, "2024-01-02T00:00:00Z")
@@ -64,7 +66,7 @@ func TestRealFFmpegGeneratesTheSheets(t *testing.T) {
 	g := seekpreview.New(f.db, &seekpreview.FFmpeg{Binary: ffmpeg}, f.dir, seekpreview.Options{})
 	start(t, g)
 	g.AfterScan("libmov")
-	waitFor(t, "both sets", func() bool { return f.hasSet(t, "wide") && f.hasSet(t, "anamorphic") })
+	waitForWithin(t, time.Minute, "both sets", func() bool { return f.hasSet(t, "wide") && f.hasSet(t, "anamorphic") })
 
 	wide, _ := f.record(t, "wide")
 	if wide.FrameCount != 21 || wide.SheetCount != 1 || wide.FrameWidth != 320 || wide.FrameHeight != 180 {
@@ -102,6 +104,7 @@ func TestFrameAtAnExactKeyframeTimeIsThatKeyframe(t *testing.T) {
 	if err != nil {
 		t.Skip("no ffmpeg on PATH")
 	}
+	seekpreview.NoRenice(t)
 	// A 32x32 patch at limited-range luma 16+219*T/250 (full range 255*T/250 once
 	// decoded), T = source seconds; a frame a second, a keyframe every 10 s.
 	path := filepath.Join(t.TempDir(), "kf.mkv")
@@ -131,6 +134,7 @@ func TestRealFFmpegVideoShorterThanAudio(t *testing.T) {
 	if err != nil {
 		t.Skip("no ffmpeg on PATH")
 	}
+	seekpreview.NoRenice(t)
 	path := filepath.Join(t.TempDir(), "long-audio.mkv")
 	if out, err := exec.Command(ffmpeg, "-y", "-v", "error",
 		"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=1:duration=118",
@@ -144,7 +148,7 @@ func TestRealFFmpegVideoShorterThanAudio(t *testing.T) {
 	g := seekpreview.New(f.db, &seekpreview.FFmpeg{Binary: ffmpeg}, f.dir, seekpreview.Options{})
 	start(t, g)
 	g.AfterScan("libmov")
-	waitFor(t, "a record", func() bool { _, ok := f.record(t, "m"); return ok })
+	waitForWithin(t, time.Minute, "a record", func() bool { _, ok := f.record(t, "m"); return ok })
 	s, _ := f.record(t, "m")
 	if s.Status != "ready" || s.FrameCount != 12 {
 		t.Fatalf("record = %+v, want ready with 12 frames", s)

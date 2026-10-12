@@ -129,8 +129,11 @@ func TestRevokingAGrantCutsALargeRelayFarShortOfTheWholeBody(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// A slow reader: 16 KiB every 10ms, about 1.6 MB/s.
+	// A slow reader: 16 KiB every 10ms, about 1.6 MB/s. Once the grant is revoked it
+	// drains at full speed, so emptying the socket buffers the relay left behind does
+	// not depend on how loaded the machine is.
 	var received atomic.Int64
+	revoked := make(chan struct{})
 	ended := make(chan struct{})
 	go func() {
 		defer close(ended)
@@ -141,7 +144,10 @@ func TestRevokingAGrantCutsALargeRelayFarShortOfTheWholeBody(t *testing.T) {
 			if err != nil {
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-revoked:
+			case <-time.After(10 * time.Millisecond):
+			}
 		}
 	}()
 	select {
@@ -155,6 +161,7 @@ func TestRevokingAGrantCutsALargeRelayFarShortOfTheWholeBody(t *testing.T) {
 	}
 
 	mustGrantSources(t, srv, admin, kidID, otherSlug)
+	close(revoked)
 	select {
 	case <-ended:
 	case <-time.After(3 * time.Second):

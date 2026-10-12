@@ -2,4 +2,4 @@
 
 package seekpreview
 
-func lowerPriority(int) {}
+var lowerPriority = func(int) {}
