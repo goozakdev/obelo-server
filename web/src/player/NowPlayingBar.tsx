@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -55,6 +56,8 @@ import SkipMarkerButton, {
 import { useQueue } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
 import { formatTimecode } from "../time";
+import type { SeekPreviews } from "../api/types";
+import { seekPreviewFrame } from "./seekPreviews";
 import { createMediaTimeStore, useMediaTime, type MediaTimeStore } from "./mediaTime";
 
 // The Now Playing bar (now-playing-bar/01): the persistent, shell-owned player.
@@ -902,35 +905,163 @@ function UpNextOverlay({
 }
 
 /** The seekable progress bar: elapsed on the left, remaining (as −m:ss) on the right,
- * a range input to click/drag-seek in between. Owns the time subscription. */
+ * a range input to click/drag-seek in between. Owns the time subscription. Given a
+ * Seek preview manifest (the full video stage only), hovering or dragging the bar
+ * shows the frame under the pointer above it (ADR-0070); the sheets load lazily —
+ * the needed one plus its next neighbour on first use, each requested once. The
+ * caller keys this on the manifest so a new decision starts fresh. */
 function ProgressBar({
   store,
   onSeek,
+  previews,
 }: {
   store: MediaTimeStore;
   onSeek: (seconds: number) => void;
+  previews?: SeekPreviews;
 }) {
   const currentTime = useMediaTime(store, (t) => t.currentTime);
   const duration = useMediaTime(store, (t) => t.duration);
   const elapsedLabel = formatTimecode(currentTime * 1000);
   const remainingSeconds = duration > 0 ? Math.max(duration - currentTime, 0) : 0;
   const remainingLabel = `-${formatTimecode(remainingSeconds * 1000)}`;
+
+  // The previewed position (0..1 of the duration) and where to draw it (px from the
+  // bar's left edge), null while hidden.
+  const [preview, setPreview] = useState<{ fraction: number; left: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const requestedSheets = useRef(new Set<number>());
+  const seekRef = useRef<HTMLInputElement | null>(null);
+
+  // The browser maps a pointer to the range value across the thumb's travel, W − thumb,
+  // not the full width. The thumb width is the CSS custom property .now-playing-seek
+  // sets (the one source for the style and this mapping); 16 only if it can't be read.
+  const geometry = () => {
+    const el = seekRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const thumb = parseFloat(getComputedStyle(el).getPropertyValue("--seek-thumb")) || 16;
+    return { rect, thumb, travel: Math.max(rect.width - thumb, 0) };
+  };
+
+  const showAt = (fraction: number, left: number) => {
+    if (!previews || !(duration > 0) || !Number.isFinite(fraction)) return;
+    const f = Math.min(Math.max(fraction, 0), 1);
+    const { sheet } = seekPreviewFrame(previews, f * duration * 1000);
+    for (const n of [sheet, sheet + 1]) {
+      const url = previews.sheets[n];
+      if (url === undefined || requestedSheets.current.has(n)) continue;
+      requestedSheets.current.add(n);
+      new Image().src = url;
+    }
+    setPreview({ fraction: f, left });
+  };
+
+  // The still is centred on the thumb's position, held inside the bar's edges.
+  const leftFor = (fraction: number, g: NonNullable<ReturnType<typeof geometry>>) => {
+    const centre = g.thumb / 2 + fraction * g.travel;
+    const half = previews ? previews.frameWidth / 2 : 0;
+    return g.rect.width > 2 * half ? Math.min(Math.max(centre, half), g.rect.width - half) : centre;
+  };
+
+  // Gated off (surface change, new decision, no manifest): nothing may linger to
+  // reappear when it comes back.
+  useEffect(() => {
+    if (previews) return;
+    setPreview(null);
+    setDragging(false);
+  }, [previews]);
+
+  // A drag ends wherever the pointer is released, not just over the bar.
+  useEffect(() => {
+    if (!dragging) return;
+    const end = () => {
+      setDragging(false);
+      setPreview(null);
+    };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [dragging]);
+
+  const frame =
+    previews && preview && duration > 0
+      ? seekPreviewFrame(previews, preview.fraction * duration * 1000)
+      : null;
+
   return (
     <div className="now-playing-progress">
       <span className="now-playing-time" data-testid="now-playing-elapsed">
         {elapsedLabel}
       </span>
-      <input
-        className="now-playing-seek"
-        type="range"
-        min={0}
-        max={duration > 0 ? duration : 0}
-        step={0.1}
-        data-testid="now-playing-progress"
-        aria-label="Seek"
-        value={Math.min(currentTime, duration > 0 ? duration : currentTime)}
-        onChange={(e) => onSeek(Number(e.target.value))}
-      />
+      <div className="now-playing-seek-wrap">
+        {previews && preview && frame && (
+          <div
+            className="now-playing-seek-preview"
+            data-testid="seek-preview"
+            style={{ left: preview.left }}
+            aria-hidden="true"
+          >
+            <div
+              className="now-playing-seek-preview-frame"
+              data-testid="seek-preview-frame"
+              style={{
+                width: previews.frameWidth,
+                height: previews.frameHeight,
+                backgroundImage: `url("${previews.sheets[frame.sheet]}")`,
+                backgroundSize: `${previews.columns * previews.frameWidth}px ${previews.rows * previews.frameHeight}px`,
+                backgroundPosition: `-${frame.x}px -${frame.y}px`,
+              }}
+            />
+            <span className="now-playing-seek-preview-time">
+              {formatTimecode(preview.fraction * duration * 1000)}
+            </span>
+          </div>
+        )}
+        <input
+          ref={seekRef}
+          className="now-playing-seek"
+          type="range"
+          min={0}
+          max={duration > 0 ? duration : 0}
+          step={0.1}
+          data-testid="now-playing-progress"
+          aria-label="Seek"
+          style={
+            {
+              "--seek-fill": `${duration > 0 ? Math.min((currentTime / duration) * 100, 100) : 0}%`,
+            } as CSSProperties
+          }
+          value={Math.min(currentTime, duration > 0 ? duration : currentTime)}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            onSeek(v);
+            // Only a pointer drag previews; during one the input value is the single
+            // source of the previewed time (a keyboard seek shows nothing).
+            if (!dragging || !(duration > 0)) return;
+            const g = geometry();
+            if (g) showAt(v / duration, leftFor(Math.min(Math.max(v / duration, 0), 1), g));
+          }}
+          onPointerDown={previews ? () => setDragging(true) : undefined}
+          onPointerMove={
+            previews && !dragging
+              ? (e) => {
+                  const g = geometry();
+                  if (!g || !(g.rect.width > 0)) return;
+                  const f =
+                    g.travel > 0 ? (e.clientX - g.rect.left - g.thumb / 2) / g.travel : 0;
+                  const clamped = Math.min(Math.max(f, 0), 1);
+                  showAt(clamped, leftFor(clamped, g));
+                }
+              : undefined
+          }
+          onPointerLeave={() => {
+            if (!dragging) setPreview(null);
+          }}
+        />
+      </div>
       <span className="now-playing-time" data-testid="now-playing-remaining">
         {remainingLabel}
       </span>
@@ -2251,7 +2382,18 @@ function CurrentPlayer({
               remaining on the right, a range input to click/drag-seek in between.
               Rendered once the element is ready for both music and video. Sits
               inside the centre so it spans only the controls' width. */}
-          {status.kind === "ready" && <ProgressBar store={timeStore} onSeek={seekTo} />}
+          {status.kind === "ready" && (
+            <ProgressBar
+              key={status.decision.seekPreviews?.sheets[0] ?? ""}
+              store={timeStore}
+              onSeek={seekTo}
+              previews={
+                video && surface === "stage" && status.decision.videoStream
+                  ? status.decision.seekPreviews
+                  : undefined
+              }
+            />
+          )}
         </div>
 
         {/* Right: volume (icon toggles mute, slider sets level), the video surface

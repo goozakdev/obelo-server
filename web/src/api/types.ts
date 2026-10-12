@@ -2169,6 +2169,24 @@ export interface WebReference {
   url: string;
 }
 
+/** The Seek preview manifest (docs/api-contract.md "Seek previews — frozen
+ * contract", ADR-0070): JPEG tile sheets a client crops locally. Read every value
+ * from here, never assume the fixed v1 numbers. */
+export interface SeekPreviews {
+  /** Time between frames, ms. */
+  intervalMs: number;
+  /** One frame, pixels. */
+  frameWidth: number;
+  frameHeight: number;
+  /** The grid of one sheet (every sheet is columns×frameWidth by rows×frameHeight). */
+  columns: number;
+  rows: number;
+  /** Frames in the whole set. */
+  frameCount: number;
+  /** Ordered sheet URLs; sheet n is `sheets[n]`. */
+  sheets: string[];
+}
+
 export interface PlaybackDecision {
   sessionId: string;
   tier: PlaybackTier;
@@ -2204,6 +2222,9 @@ export interface PlaybackDecision {
    * (enable the <track>); no server round-trip. */
   subtitles: SubtitleTrack[];
   estimatedBitrate: number;
+  /** Seek preview manifest — **omitted entirely** when the File has none (music,
+   * Online, not generated yet). Absent means no preview, today's behaviour. */
+  seekPreviews?: SeekPreviews;
 }
 
 /** Play state reported with a progress ping (`POST /sessions/{id}/progress`). */

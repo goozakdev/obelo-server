@@ -2148,8 +2148,84 @@ body {
   text-align: right;
 }
 .now-playing-seek {
+  /* The thumb width: ONE source — the player reads this property to map a pointer to
+     the time the native range would pick (W − thumb of travel), for the Seek preview. */
+  --seek-thumb: 16px;
+  display: block;
+  width: 100%;
+  height: var(--seek-thumb);
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.now-playing-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--seek-fill, 0%),
+    var(--border-strong) var(--seek-fill, 0%)
+  );
+}
+.now-playing-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--seek-thumb);
+  height: var(--seek-thumb);
+  margin-top: calc((4px - var(--seek-thumb)) / 2);
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.now-playing-seek::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.now-playing-seek::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.now-playing-seek::-moz-range-thumb {
+  width: var(--seek-thumb);
+  height: var(--seek-thumb);
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* The Seek preview (ADR-0070) floats above the seek bar, centred on the pointer; the
+   still is cropped from a tile sheet by background-position. */
+.now-playing-seek-wrap {
+  position: relative;
   flex: 1 1 auto;
-  accent-color: var(--accent);
+  min-width: 0;
+}
+.now-playing-seek-preview {
+  position: absolute;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  pointer-events: none;
+  z-index: 1;
+}
+.now-playing-seek-preview-frame {
+  background-color: #000;
+  background-repeat: no-repeat;
+}
+.now-playing-seek-preview-time {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 /* The ONE video surface (slice 03): a single stable wrapper repositioned by its
