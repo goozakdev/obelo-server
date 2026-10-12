@@ -3,9 +3,11 @@ package seekpreview
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strconv"
@@ -114,8 +116,12 @@ func (f *FFmpeg) toneMap(ctx context.Context, path string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := ""
-	if fi, err := os.Stat(path); err == nil {
+	fi, statErr := os.Stat(path)
+	if statErr == nil {
 		key = fmt.Sprintf("%s|%d|%d", path, fi.ModTime().UnixNano(), fi.Size())
+	}
+	if errors.Is(statErr, fs.ErrNotExist) && f.IsHDR == nil {
+		return false, ErrFileNotFound // the real ffprobe would only say "exit 1"
 	}
 	if key == "" || key != f.lastKey {
 		hdr, err := f.isHDR(ctx, path)

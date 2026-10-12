@@ -196,9 +196,9 @@ const maxRelayPlaylistBytes = 4 << 20
 // relayResponseHeaders are what a relayed media response carries back. An
 // allowlist rather than a copy, for the request side's reason in reverse: the
 // sharer's cookies, its Server header and anything else it chooses to say stop
-// here. These five are what a player needs to seek.
+// here. These are what a player needs to seek, and (ETag) a Seek preview sheet to revalidate.
 var relayResponseHeaders = []string{
-	"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control",
+	"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "ETag",
 }
 
 // writeRelayFetchError renders a failed media fetch. The two Link states get the

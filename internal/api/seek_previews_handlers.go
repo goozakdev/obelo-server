@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -163,6 +164,9 @@ func serveSeekPreviewSheet(w http.ResponseWriter, r *http.Request, f *os.File) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
+	// Not max-age: the /files URL is stable across regenerations (DECISIONS 26).
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("ETag", fmt.Sprintf(`"%x-%x"`, info.Size(), info.ModTime().UnixNano()))
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 

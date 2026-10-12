@@ -832,3 +832,75 @@ func TestSeekPreviewsRelaySheetNamesAreChecked(t *testing.T) {
 		t.Error("a malformed sheet name reached the sharer")
 	}
 }
+
+// bearerDo is a GET with a bearer credential and extra request headers.
+func bearerDo(t *testing.T, srv *testharness.Server, apiPath, token string, extra http.Header) corsResponse {
+	t.Helper()
+	h := http.Header{"Authorization": {"Bearer " + token}}
+	for k, vs := range extra {
+		h[k] = vs
+	}
+	return streamDo(t, srv, http.MethodGet, apiPath, "", h)
+}
+
+// assertSheetRevalidates: a sheet is `private, no-cache` with a strong ETag, and
+// the ETag in If-None-Match gets a bodiless 304 (DECISIONS 26).
+func assertSheetRevalidates(t *testing.T, what string, get func(extra http.Header) corsResponse) {
+	t.Helper()
+	r := get(nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("%s: status %d", what, r.status)
+	}
+	if cc := r.header.Get("Cache-Control"); cc != "private, no-cache" {
+		t.Errorf("%s: Cache-Control = %q, want %q", what, cc, "private, no-cache")
+	}
+	etag := r.header.Get("ETag")
+	if len(etag) < 3 || etag[0] != '"' || etag[len(etag)-1] != '"' {
+		t.Fatalf("%s: ETag = %q, want a strong quoted tag", what, etag)
+	}
+	n := get(http.Header{"If-None-Match": {etag}})
+	if n.status != http.StatusNotModified || len(n.body) != 0 {
+		t.Errorf("%s: If-None-Match = %d with %d body bytes, want 304 and none", what, n.status, len(n.body))
+	}
+	if other := get(http.Header{"If-None-Match": {`"other"`}}); other.status != http.StatusOK {
+		t.Errorf("%s: a different ETag = %d, want 200", what, other.status)
+	}
+}
+
+func TestSeekPreviewsSheetsRevalidateOnEveryRoute(t *testing.T) {
+	t.Parallel()
+	s := newSeededStream(t)
+	assertSheetRevalidates(t, "stream token", func(h http.Header) corsResponse {
+		return streamDo(t, s.srv, http.MethodGet, s.path("0.jpg"), "", h)
+	})
+	assertSheetRevalidates(t, "file", func(h http.Header) corsResponse {
+		return bearerDo(t, s.srv, "/api/v1/files/"+s.fileID+"/seekPreviews/0.jpg", s.token, h)
+	})
+	assertSheetRevalidates(t, "session", func(h http.Header) corsResponse {
+		return bearerDo(t, s.srv, "/api/v1/sessions/"+s.dec.SessionID+"/seekPreviews/0.jpg", s.token, h)
+	})
+}
+
+// A relayed sheet carries the sharer's validators through, and the viewer's
+// If-None-Match reaches the sharer.
+func TestSeekPreviewsRelayedSheetsRevalidate(t *testing.T) {
+	t.Parallel()
+	f := linkForRelay(t)
+	set, sheets, _ := previewFixture(t)
+	var list titlesListResp
+	f.sharer.AuthGET("/api/v1/libraries/"+f.srcLib+"/titles?limit=50", f.sharerAdmin, &list)
+	var detail titleDetailResp
+	f.sharer.AuthGET("/api/v1/titles/"+findTitle(t, list, "Dune"), f.sharerAdmin, &detail)
+	for _, ed := range detail.Editions {
+		for _, file := range ed.Files {
+			f.sharer.SeedSeekPreviews(file.ID, set, sheets)
+		}
+	}
+	var dec decisionResp
+	if status, body := f.home.JSON(http.MethodPost, "/api/v1/titles/"+f.mirroredTitle(t, "Dune")+"/playback", f.homeAdmin, mp4Profile(), &dec); status != http.StatusOK {
+		t.Fatalf("relayed playback = %d; body: %s", status, body)
+	}
+	assertSheetRevalidates(t, "relayed", func(h http.Header) corsResponse {
+		return streamDo(t, f.home, http.MethodGet, "/api/v1/stream/"+dec.StreamToken+"/seekPreviews/0.jpg", "", h)
+	})
+}

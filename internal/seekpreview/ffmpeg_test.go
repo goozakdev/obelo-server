@@ -241,3 +241,13 @@ func TestNoZscaleIsProbedAgainOnTheNextAttempt(t *testing.T) {
 		t.Fatal("still 'lacks zscale' after ffmpeg gained it")
 	}
 }
+
+// TestMissingFileIsErrFileNotFoundWithoutProbing: the real HDR check is not run for
+// a path that is not on disk (it would only fail "ffprobe exit 1").
+func TestMissingFileIsErrFileNotFoundWithoutProbing(t *testing.T) {
+	x := &seekpreview.FFmpeg{Binary: "/nonexistent/ffmpeg", Probe: "/nonexistent/ffprobe"}
+	_, err := x.Frame(context.Background(), filepath.Join(t.TempDir(), "gone.mkv"), 0)
+	if !errors.Is(err, seekpreview.ErrFileNotFound) {
+		t.Fatalf("Frame err = %v, want ErrFileNotFound", err)
+	}
+}

@@ -3,9 +3,11 @@ package seekpreview_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -687,5 +689,80 @@ func TestEmptyFrameMidFileFailsTheFileButNearTheEndEndsIt(t *testing.T) {
 	}
 	if s, _ := f.record(t, "tail"); s.Status != "ready" || s.FrameCount != 19 {
 		t.Errorf("near-the-end record = %+v, want ready with 19 frames (frame 19 is empty, in the last interval)", s)
+	}
+}
+
+// parkingStore parks the first SeekPreviewFile call after it has read the File, so a
+// test can act in the window between the worker picking a File and generating it.
+type parkingStore struct {
+	*store.DB
+	once    sync.Once
+	parked  chan struct{}
+	release chan struct{}
+}
+
+func (s *parkingStore) SeekPreviewFile(id string) (store.SeekPreviewFile, error) {
+	f, err := s.DB.SeekPreviewFile(id)
+	s.once.Do(func() {
+		close(s.parked)
+		<-s.release
+	})
+	return f, err
+}
+
+// TestDeleteBetweenPickingAFileAndGeneratingItLeavesNoSet: a Library's previews
+// deleted after the worker picked a File but before it generated leave no record
+// and no directory.
+func TestDeleteBetweenPickingAFileAndGeneratingItLeavesNoSet(t *testing.T) {
+	f := newFixture(t)
+	f.addFile(t, "libmov", "m", 10_000, "2024-01-01T00:00:00Z")
+	ps := &parkingStore{DB: f.db, parked: make(chan struct{}), release: make(chan struct{})}
+	g := seekpreview.New(ps, f.ex, f.dir, seekpreview.Options{YieldPoll: 5 * time.Millisecond})
+	start(t, g)
+	g.AfterScan("libmov")
+	select {
+	case <-ps.parked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker never picked the File")
+	}
+	if err := f.db.SetSeekPreviewsEnabled("libmov", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.DeleteLibrary("libmov"); err != nil {
+		t.Fatal(err)
+	}
+	close(ps.release)
+	time.Sleep(200 * time.Millisecond) // nothing to wait on: the absence of a set is the claim
+	if _, ok := f.record(t, "m"); ok || exists(filepath.Join(f.dir, "m")) {
+		t.Error("a File deleted between pick and generation got a set")
+	}
+	if n := len(f.ex.paths()); n != 0 {
+		t.Errorf("%d extractions after the Library's previews were deleted, want 0", n)
+	}
+}
+
+// TestFileGoneFromDiskFailsWithFileNotFoundAndIsNotPickedAgain (DECISIONS 27).
+func TestFileGoneFromDiskFailsWithFileNotFoundAndIsNotPickedAgain(t *testing.T) {
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	f := newFixture(t)
+	f.addFile(t, "libmov", "gone", 10_000, "2024-01-01T00:00:00Z")
+	f.ex.failPath("/m/gone.mkv", fmt.Errorf("checking for HDR: %w", seekpreview.ErrFileNotFound))
+	g := f.generator(seekpreview.Options{})
+	start(t, g)
+	g.Backfill()
+	waitFor(t, "the failure record", func() bool { s, ok := f.record(t, "gone"); return ok && s.Status == "failed" })
+	if s, _ := f.record(t, "gone"); s.Reason != "file not found" {
+		t.Errorf("reason = %q, want %q", s.Reason, "file not found")
+	}
+	g.Backfill()
+	g.AfterScan("libmov")
+	time.Sleep(100 * time.Millisecond)
+	if n := len(f.ex.paths()); n != 1 {
+		t.Errorf("%d extractions, want 1: a vanished File is not picked again", n)
+	}
+	if out := logs.String(); strings.Contains(out, "ffprobe") || !strings.Contains(out, "file not found") {
+		t.Errorf("log = %q, want one plain 'file not found' line and no ffprobe", out)
 	}
 }

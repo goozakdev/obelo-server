@@ -59,6 +59,10 @@ var ErrNoFrame = errors.New("no frame")
 // (DECISIONS 20) rather than getting a washed-out set.
 var ErrToneMapUnavailable = errors.New("ffmpeg lacks zscale; cannot tone-map HDR")
 
+// ErrFileNotFound is what an Extractor answers when the File's bytes are gone from
+// disk. The File fails with exactly this reason (DECISIONS 27).
+var ErrFileNotFound = errors.New("file not found")
+
 // Store is what generation reads and writes. *store.DB satisfies it.
 type Store interface {
 	SeekPreviewFile(fileID string) (store.SeekPreviewFile, error)
@@ -643,7 +647,11 @@ func (g *Generator) generate(parent context.Context, f store.SeekPreviewFile, st
 	}
 	if err != nil {
 		_ = os.RemoveAll(g.Dir(f.FileID))
-		log.Printf("obelo: seek previews of %s: %v", f.Path, err)
+		if errors.Is(err, ErrFileNotFound) {
+			log.Printf("obelo: seek previews of %s: file not found", f.Path)
+		} else {
+			log.Printf("obelo: seek previews of %s: %v", f.Path, err)
+		}
 		set = store.SeekPreviewSet{
 			FileID: f.FileID, Mtime: f.Mtime, SizeBytes: f.SizeBytes,
 			Status: store.SeekPreviewFailed, Reason: oneLine(err),
@@ -705,6 +713,9 @@ func (g *Generator) build(ctx context.Context, f store.SeekPreviewFile) (store.S
 			}
 			if errors.Is(err, ErrToneMapUnavailable) {
 				return store.SeekPreviewSet{}, ErrToneMapUnavailable
+			}
+			if errors.Is(err, ErrFileNotFound) {
+				return store.SeekPreviewSet{}, ErrFileNotFound
 			}
 			if err != nil {
 				return store.SeekPreviewSet{}, fmt.Errorf("frame %d: %w", i, err)
