@@ -186,6 +186,9 @@ type Service struct {
 	// backend; VideoToolbox is honored by the args builder and every other value
 	// falls back to the guaranteed CPU path.
 	accel transcode.Accel
+	// onPlay is told the id of the File a new session starts playing (Seek preview
+	// generation moves it to the front of its queue). Nil until SetOnPlay.
+	onPlay func(fileID string)
 }
 
 // Governance holds the ADR-0009 governance knobs the Service applies: the global
@@ -247,6 +250,10 @@ func NewService(s interface {
 	}
 	return svc
 }
+
+// SetOnPlay registers what is told, with a File's id, each time a Playback session
+// starts on it. It must not block.
+func (s *Service) SetOnPlay(f func(fileID string)) { s.onPlay = f }
 
 // writesWatchState reports whether this User's playback may touch per-Title watch
 // state. It is false for exactly one thing: a linked Server, playing under the
@@ -647,6 +654,9 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// default/memory resolution never writes. Best-effort, like the audio write.
 	if explicitVideo {
 		s.rememberVideoPick(req.UserID, req.TitleID, dec.VideoStream)
+	}
+	if s.onPlay != nil {
+		s.onPlay(dec.File.ID)
 	}
 	return dec, sess, nil, nil, nil
 }

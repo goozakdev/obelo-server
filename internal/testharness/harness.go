@@ -41,6 +41,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/markerdetect"
 	"github.com/goozakdev/obelo-server/internal/plugins"
+	"github.com/goozakdev/obelo-server/internal/seekpreview"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
@@ -471,6 +472,20 @@ func WithOnlineSourceMediaExemptAt(addrs ...string) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithOnlineSourceMediaExemptAt(addrs...)) }
 }
 
+// WithSeekPreviewExtractor sets how Seek preview generation decodes a frame
+// (ADR-0070) and turns generation on. By default a harness server runs no Seek
+// preview generation at all (no Generator, so no turn of the shared background
+// lane, which Marker detection tests need free); this is the opt-in.
+func WithSeekPreviewExtractor(x seekpreview.Extractor) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithSeekPreviewExtractor(x)) }
+}
+
+// WithRealSeekPreviews makes Seek preview generation decode with the real ffmpeg
+// on PATH (applied after the default, so it wins).
+func WithRealSeekPreviews() Option {
+	return WithSeekPreviewExtractor(&seekpreview.FFmpeg{})
+}
+
 // silentAnalyzer is the harness default Analyzer: it hears nothing at all.
 type silentAnalyzer struct{}
 
@@ -507,6 +522,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// Marker detection hears nothing unless a test opts in with WithMarkerAnalyzer
 	// (applied after this, so it wins).
 	b.appOpts = append(b.appOpts, app.WithMarkerAnalyzer(silentAnalyzer{}))
+	b.appOpts = append(b.appOpts, app.WithoutSeekPreviews())
 	for _, o := range opts {
 		o(b)
 	}

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/bglane"
 	"github.com/goozakdev/obelo-server/internal/markers"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -55,6 +56,10 @@ type Options struct {
 	// those whose audio matches its own first (partnersOf); default 3. Every pair is compared once, so a Season of n costs about
 	// n*Partners comparisons instead of n².
 	Partners int
+	// Lane is the background lane shared with Seek preview generation (ADR-0070
+	// §3): a Season is listened to only while holding it, behind any Seek preview
+	// waiting for it. Nil means detection has the lane to itself.
+	Lane *bglane.Lane
 }
 
 // job is one queued piece of work: a Library after its scan, or one Show an
@@ -219,7 +224,8 @@ func (d *Detector) run(ctx context.Context) {
 			continue
 		}
 		for _, s := range seasons {
-			if err := d.detectSeason(ctx, s, j.showID != "", lowered); err != nil {
+			err := d.inLane(ctx, func() error { return d.detectSeason(ctx, s, j.showID != "", lowered) })
+			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -227,6 +233,19 @@ func (d *Detector) run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// inLane runs f holding the shared background lane, if there is one.
+func (d *Detector) inLane(ctx context.Context, f func() error) error {
+	if d.opts.Lane == nil {
+		return f()
+	}
+	release, err := d.opts.Lane.Acquire(ctx, bglane.PriorityMarkers)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return f()
 }
 
 // seasonsOf resolves a job to its Seasons. A Library job for a Library whose

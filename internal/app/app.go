@@ -19,6 +19,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/api"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/bglane"
 	"github.com/goozakdev/obelo-server/internal/builtins"
 	"github.com/goozakdev/obelo-server/internal/bundled"
 	"github.com/goozakdev/obelo-server/internal/catalog"
@@ -39,6 +40,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
+	"github.com/goozakdev/obelo-server/internal/seekpreview"
 	"github.com/goozakdev/obelo-server/internal/server"
 	"github.com/goozakdev/obelo-server/internal/signin"
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -159,6 +161,13 @@ type App struct {
 	// listens to a TV Library's Seasons after a scan, yielding to Transcodes.
 	// Closed with the App before the DB, killing any decoder in flight.
 	markerDetector *markerdetect.Detector
+
+	// seekPreviews is Seek preview generation (ADR-0070): the one worker that cuts
+	// each video File of a Movie or TV Library into tile sheets after a scan,
+	// yielding to Transcodes, ahead of Marker detection in their shared lane. Nil
+	// without ffmpeg. Closed with the App before the DB, killing any decoder in
+	// flight.
+	seekPreviews *seekpreview.Generator
 
 	// markerFetch asks the Marker providers about a played File in the
 	// background. Closed with the App before the DB and the Plugins, ending any
@@ -291,6 +300,11 @@ type options struct {
 	// do not each spawn decoders; a detection test injects a recording one, or the
 	// real one.
 	markerAnalyzer markerdetect.Analyzer
+	// seekPreviewExtractor overrides how Seek preview generation decodes a frame
+	// (default: the ffmpeg binary).
+	seekPreviewExtractor seekpreview.Extractor
+	// noSeekPreviews leaves Seek preview generation off altogether (tests).
+	noSeekPreviews bool
 	// onlineSourceClient carries the Online source relay's upstream fetches
 	// (thumbnails and relayed media). nil is production: a default transport, under
 	// the https and private-address redirect policy. A test supplies the client that
@@ -322,6 +336,18 @@ func WithOnlineSourceMediaExemptAt(addrs ...string) Option {
 // client cannot be given one that follows a redirect into a private address.
 func WithOnlineSourceClient(c *http.Client) Option {
 	return func(o *options) { o.onlineSourceClient = c }
+}
+
+// WithSeekPreviewExtractor overrides how Seek preview generation decodes a frame (tests).
+func WithSeekPreviewExtractor(x seekpreview.Extractor) Option {
+	return func(o *options) { o.seekPreviewExtractor, o.noSeekPreviews = x, false }
+}
+
+// WithoutSeekPreviews leaves Seek preview generation off: no Generator exists, so
+// it takes no turn of the shared background lane (tests). A later
+// WithSeekPreviewExtractor turns it back on.
+func WithoutSeekPreviews() Option {
+	return func(o *options) { o.noSeekPreviews = true }
 }
 
 // WithMarkerAnalyzer overrides how Marker detection listens to a File (tests).
@@ -622,17 +648,36 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// encodes and a remux encoding its audio included — and holds no slot of the
 	// cap. Without ffmpeg there is nothing to listen with, so it does not run at
 	// all rather than recording every File as heard with nothing found.
+	//
+	// Seek preview generation (ADR-0070 §3) shares one background lane with it, so
+	// only one of the two heavy jobs runs at a time, previews first.
+	backgroundLane := &bglane.Lane{}
+	transcodeRunning := func() bool { return playbackSvc.Sessions().LocalTranscodes() > 0 }
+	var seekPreviews *seekpreview.Generator
 	var markerDetector *markerdetect.Detector
 	if ffmpegAvailability.Available {
+		if !o.noSeekPreviews {
+			extractor := o.seekPreviewExtractor
+			if extractor == nil {
+				extractor = &seekpreview.FFmpeg{Binary: ffmpegAvailability.Binary}
+			}
+			seekPreviews = seekpreview.New(db, extractor, filepath.Join(cfg.DataDir, "seekpreviews"), seekpreview.Options{
+				Busy: transcodeRunning,
+				Lane: backgroundLane,
+			})
+			playbackSvc.SetOnPlay(seekPreviews.Bump)
+		}
 		markerAnalyzer := o.markerAnalyzer
 		if markerAnalyzer == nil {
 			markerAnalyzer = markerdetect.FFmpeg{Binary: ffmpegAvailability.Binary}
 		}
 		markerDetector = markerdetect.New(db, markerAnalyzer, markerdetect.Options{
-			Busy: func() bool { return playbackSvc.Sessions().LocalTranscodes() > 0 },
+			Busy: transcodeRunning,
+			Lane: backgroundLane,
 		})
 	} else {
 		log.Printf("obelo: marker detection: off — no usable ffmpeg")
+		log.Printf("obelo: seek previews: off — no usable ffmpeg")
 	}
 	// Handed to the API as an interface: a nil *Detector must reach it as nil, so
 	// a scan queues nothing and "detect markers now" answers 503.
@@ -1187,10 +1232,17 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		installedPlugins: installed,
 		pluginManager:    pluginManager,
 		markerDetector:   markerDetector,
+		seekPreviews:     seekPreviews,
 		markerFetch:      markerFetch,
 	}
 	if markerDetector != nil {
 		markerDetector.Start()
+	}
+	if seekPreviews != nil {
+		seekPreviews.Start()
+		// Files that have no set yet are queued now, not only after the next scan
+		// (DECISIONS 21); the idle-only and lane rules still decide when.
+		seekPreviews.Backfill()
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -1219,7 +1271,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// non-blocking background pass only when AutoEnrichAfterScan is CURRENTLY on
 	// (live DB read) AND a kind is currently enabled, so a toggle in the UI applies
 	// to the next scan with no restart and a disabled server does no background work.
-	enrichTrigger := app.enqueueEnrichAfterScan
+	// Seek preview generation is queued after the same scans (manual and scheduled).
+	enrichTrigger := func(libraryID string) {
+		app.enqueueEnrichAfterScan(libraryID)
+		if app.seekPreviews != nil {
+			app.seekPreviews.AfterScan(libraryID)
+		}
+	}
 
 	// The Admin's manual pass (ADR-0051 amendment). Handed to the API layer as two
 	// functions, exactly as enrichTrigger is, rather than letting a handler reach
@@ -1590,6 +1648,9 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 				if a.markerDetector != nil {
 					a.markerDetector.AfterScan(lib.ID)
 				}
+				if a.seekPreviews != nil {
+					a.seekPreviews.AfterScan(lib.ID)
+				}
 			}
 		}
 	}
@@ -1934,6 +1995,9 @@ func (a *App) Close() error {
 	// decoder is killed and waited for.
 	if a.markerDetector != nil {
 		a.markerDetector.Close()
+	}
+	if a.seekPreviews != nil {
+		a.seekPreviews.Close()
 	}
 	// The same for the Marker providers' asking: cancelled and waited for, so none
 	// saves into a closed database or calls a closed Plugin.
