@@ -1370,6 +1370,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		MarkerFetch: markerFetch,
 		Online:      onlineSvc,
 
+		// Seek preview sets are served whether or not generation is running.
+		SeekPreviews:    db,
+		SeekPreviewsDir: filepath.Join(cfg.DataDir, "seekpreviews"),
+
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
 		Tailnet:         tailnetManager,

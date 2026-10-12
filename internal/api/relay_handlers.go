@@ -103,6 +103,10 @@ func relayTailAllowed(sess playback.Session, tail string) bool {
 	if file, ok := strings.CutPrefix(tail, sessionRoot+"/hls/"); ok {
 		return file != "" && !strings.Contains(file, "/")
 	}
+	if name, ok := strings.CutPrefix(tail, sessionRoot+"/"+streamSeekPreviewsPrefix); ok {
+		_, ok := parseSeekPreviewSheet(name)
+		return ok
+	}
 	if sess.RemoteTitleID != "" {
 		if file, ok := strings.CutPrefix(tail, "titles/"+sess.RemoteTitleID+"/subtitles/"); ok {
 			return file != "" && !strings.Contains(file, "/")
@@ -319,11 +323,18 @@ func relayTokenURIMapper(sess playback.Session) func(string) string {
 }
 
 // relayTailForArtifact maps the stream-token route's artifact name onto the
-// sharer's path tail: "stream" is the progressive leaf and "hls/{file}" is an HLS
-// artifact, the same two shapes that route names for a local session.
+// sharer's path tail: "stream" is the progressive leaf, "hls/{file}" is an HLS
+// artifact and "seekPreviews/{n}.jpg" a Seek preview sheet, the shapes that route
+// names for a local session.
 func relayTailForArtifact(sess playback.Session, artifact string) (string, bool) {
 	if artifact == streamProgressiveArtifact {
 		return "sessions/" + sess.RemoteSessionID + "/stream", true
+	}
+	if name, ok := strings.CutPrefix(artifact, streamSeekPreviewsPrefix); ok {
+		if _, ok := parseSeekPreviewSheet(name); !ok {
+			return "", false
+		}
+		return "sessions/" + sess.RemoteSessionID + "/" + artifact, true
 	}
 	file, ok := strings.CutPrefix(artifact, streamHLSArtifactPrefix)
 	if !ok || file == "" || strings.Contains(file, "/") {
@@ -357,6 +368,9 @@ func relayDecisionResponse(dec playback.Decision, localSessionID string) map[str
 	out["sessionId"] = localSessionID
 	delete(out, "streamToken")
 	delete(out, "streamTokenExpiresAt")
+	// The sharer's sheet URLs carry the sharer's stream token; the handler re-adds the
+	// manifest against this Server's own (relaySeekPreviews).
+	delete(out, "seekPreviews")
 
 	mapURL := relayURIMapper(localSessionID)
 	if u, ok := out["streamUrl"].(string); ok {

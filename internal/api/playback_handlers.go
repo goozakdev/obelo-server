@@ -708,6 +708,10 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			} else {
 				relayed["streamToken"] = grant.Token
 				relayed["streamTokenExpiresAt"] = grant.ExpiresAt.UTC().Format(time.RFC3339)
+				// The sharer's manifest, re-pointed at this Server's token route.
+				if m := relaySeekPreviews(dec.Relay.Decision, grant.Token); m != nil {
+					relayed["seekPreviews"] = m
+				}
 			}
 			writeJSON(w, http.StatusOK, relayed)
 			return
@@ -725,6 +729,7 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 		} else {
 			resp.StreamToken = grant.Token
 			resp.StreamTokenExpiresAt = grant.ExpiresAt.UTC().Format(time.RFC3339)
+			resp.SeekPreviews = sessionSeekPreviews(deps, sess, grant.Token)
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
@@ -943,6 +948,18 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleSessionMarkers(svc, deps.MarkerFetch, deps.MarkerAutoSkip, id)))(w, r)
 			return
 		}
+		// GET {id}/seekPreviews/{n}.jpg: a sheet of the session's File, the session-id
+		// twin of /stream/{token}/seekPreviews/{n}.jpg (a Linked Library's relay spends
+		// it). Read-only, so bearer or media cookie like /stream.
+		if id, name, ok := cutSeekPreviews(rest); ok {
+			if id == "" || name == "" || strings.Contains(name, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireGetOrHead(
+				requireAuthAllowCookie(deps.Auth, handleSessionSeekPreview(deps, id, name)))(w, r)
+			return
+		}
 		// Bare /sessions/{id} → DELETE ends it.
 		if strings.Contains(rest, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -1103,6 +1120,16 @@ func handleSessionStream(svc *playback.Service, sessionID string) http.HandlerFu
 // package does not import transcode just for a string (the route is a transport
 // concern, the muxer config a domain one).
 const playbackHLSPlaylist = "index.m3u8"
+
+// cutSeekPreviews splits a /sessions subtree remainder of the form
+// "{id}/seekPreviews/{file}" into its session id and file name.
+func cutSeekPreviews(rest string) (id, file string, ok bool) {
+	i := strings.Index(rest, "/"+streamSeekPreviewsPrefix)
+	if i < 0 {
+		return "", "", false
+	}
+	return rest[:i], rest[i+1+len(streamSeekPreviewsPrefix):], true
+}
 
 // cutHLS splits a /sessions subtree remainder of the form "{id}/hls/{file}" into
 // its session id and file name. It returns ok=false when the path is not an HLS

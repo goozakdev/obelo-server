@@ -215,6 +215,12 @@ func handleStreamTokenSubtree(deps Deps) http.HandlerFunc {
 			}
 		}
 
+		if name, ok := strings.CutPrefix(artifact, streamSeekPreviewsPrefix); ok {
+			// A Seek preview sheet of the session's File (ADR-0070); every refusal is
+			// the subtree's one 404.
+			serveSessionSeekPreview(deps, w, r, user.ID, sessionID, name)
+			return
+		}
 		if artifact == streamProgressiveArtifact {
 			// Progressive direct play. http.ServeContent still owns Range/206/If-Range
 			// exactly as on the bearer path — an AirPlay receiver range-seeks, and this

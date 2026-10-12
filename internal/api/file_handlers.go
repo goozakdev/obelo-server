@@ -38,8 +38,8 @@ import (
 // given id exists, which is the fact the Scope is hiding.
 
 // handleFileSubtree dispatches the /files/{id}... routes. The only leaf is GET
-// {id}/download (the direct-file stream); everything else is 404. {id} must be a
-// single path element.
+// {id}/download (the direct-file stream) and the Seek preview routes; everything
+// else is 404. {id} must be a single path element.
 func handleFileSubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/files/")
@@ -56,6 +56,23 @@ func handleFileSubtree(deps Deps) http.HandlerFunc {
 				requireAuthAllowQueryToken(deps.Auth,
 					requireScope(deps.Access, handleFileDownload(deps.Catalog, id))))(w, r)
 			return
+		}
+		// GET {id}/seekPreviews and {id}/seekPreviews/{n}.jpg: the Seek preview set of a
+		// downloaded File (ADR-0070). BEARER HEADER ONLY — requireAuth, deliberately
+		// not requireAuthAllowQueryToken: ?token= stays exclusive to /download, so a
+		// token in a URL reaches nothing but the original bytes. Scoped like /download.
+		if id, tail, ok := strings.Cut(rest, "/"); ok && id != "" {
+			name, isSheet := strings.CutPrefix(tail, fileSeekPreviews+"/")
+			sheet := ""
+			if isSheet {
+				sheet = name
+			}
+			if tail == fileSeekPreviews || (isSheet && name != "" && !strings.Contains(name, "/")) {
+				requireGetOrHead(
+					requireAuth(deps.Auth,
+						requireScope(deps.Access, handleFileSeekPreviews(deps, deps.Catalog, id, sheet))))(w, r)
+				return
+			}
 		}
 		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 	}

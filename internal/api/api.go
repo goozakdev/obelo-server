@@ -239,6 +239,12 @@ type Deps struct {
 	// /sessions/{id}/markers serves the stored Markers alone.
 	MarkerFetch *markerfetch.Service
 
+	// SeekPreviews reads a File's Seek preview record, and SeekPreviewsDir is where
+	// its tile sheets live (<data>/seekpreviews/<fileID>/<n>.jpg). Both are nil/empty
+	// in narrow tests, where no File has previews.
+	SeekPreviews    SeekPreviewReader
+	SeekPreviewsDir string
+
 	// Online lists the Online sources, serves their pages and relays their media
 	// (internal/onlinesource, ADR-0068). Nil in narrow tests, where every
 	// /onlineSources route reads as "no source is enabled".
