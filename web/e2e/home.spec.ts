@@ -312,14 +312,20 @@ test.describe("home: empty-state rendering matches the API", () => {
       return (await res.json()) as {
         continueWatching: unknown[];
         recentlyAdded: unknown[];
+        rows?: unknown[];
       };
     });
 
     const cwEmpty = (home.continueWatching ?? []).length === 0;
     const raEmpty = (home.recentlyAdded ?? []).length === 0;
 
+    // With `rows` (features.homeRows) the server omits an empty row, so an empty
+    // one is simply absent; the legacy layout (no `rows`) shows its empty state.
     if (cwEmpty) {
-      await expect(page.getByTestId("home-continue-watching-empty")).toBeVisible();
+      await expect(page.getByTestId("home-continue-watching-empty")).toHaveCount(
+        home.rows ? 0 : 1,
+      );
+      await expect(page.getByTestId("home-continue-watching")).toHaveCount(home.rows ? 0 : 1);
     } else {
       await expect(
         page.getByTestId("home-continue-watching").getByTestId("poster-tile").first(),
@@ -327,7 +333,10 @@ test.describe("home: empty-state rendering matches the API", () => {
     }
 
     if (raEmpty) {
-      await expect(page.getByTestId("home-recently-added-empty")).toBeVisible();
+      await expect(page.getByTestId("home-recently-added-empty")).toHaveCount(
+        home.rows ? 0 : 1,
+      );
+      await expect(page.getByTestId("home-recently-added")).toHaveCount(home.rows ? 0 : 1);
     } else {
       await expect(
         page.getByTestId("home-recently-added").getByTestId("poster-tile").first(),
