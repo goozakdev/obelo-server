@@ -35,9 +35,8 @@ export function filterFromSearch(
   return null;
 }
 
-/** The query with any filter removed (`null`), other params untouched. */
-export function filterToSearch(params: URLSearchParams, filter: null): URLSearchParams {
-  void filter;
+/** The query with any filter removed, other params untouched. */
+export function filterToSearch(params: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(params);
   for (const t of FILTER_TYPES) next.delete(t);
   next.delete("personName");

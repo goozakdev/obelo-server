@@ -44,7 +44,7 @@ export default function LibraryGridScreen() {
         className="nav-link"
         data-testid="filter-clear"
         aria-label={`Clear filter ${applied.label}`}
-        onClick={() => setSearch(filterToSearch(search, null))}
+        onClick={() => setSearch(filterToSearch(search))}
       >
         &times;
       </button>

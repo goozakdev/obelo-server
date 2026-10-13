@@ -51,7 +51,7 @@ describe("filterFromSearch / filterToSearch", () => {
     expect(filterFromSearch(new URLSearchParams("foo=bar"))).toBeNull();
   });
   it("clearing removes the filter params and keeps others", () => {
-    const next = filterToSearch(new URLSearchParams("person=x&personName=Y&foo=bar"), null);
+    const next = filterToSearch(new URLSearchParams("person=x&personName=Y&foo=bar"));
     expect(next.toString()).toBe("foo=bar");
   });
 });

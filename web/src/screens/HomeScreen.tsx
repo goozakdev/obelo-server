@@ -8,15 +8,15 @@ import PosterTile from "../browse/PosterTile";
 import { ShowTile } from "../browse/ShowGrid";
 import { seeAllPath } from "../browse/homeRows";
 
-// The Home landing (issue 05): the two per-User computed rows from GET /home —
-// Continue Watching (in-progress titles, most-recent first) and Recently Added
-// (newest-added first). Each card reuses the grid's PosterTile (so a card looks
+// The Home landing (issue 05): the per-User rows from GET /home — Continue
+// Watching, Up Next, My List, Recently Added and the Discovery rows, in the
+// server's order (or the three fixed rows from an older Server). Each card reuses the grid's PosterTile (so a card looks
 // and behaves identically everywhere) and links to the Title's detail/play page.
 //
 // The server computes both rows; we just render what it returns. A title watched
 // past the threshold drops out of Continue Watching server-side, so we render the
-// result without any client-side watch logic. A brand-new/empty server yields two
-// empty rows, each shown with a sensible empty state.
+// result without any client-side watch logic. A brand-new/empty server yields no
+// rows with items, shown as one Home-level empty state.
 //
 // This screen keeps the `home-screen` testid and a working link into the
 // libraries area (the auth/browse E2E specs rely on `home-screen` and click
@@ -64,7 +64,10 @@ export default function HomeScreen() {
 
 // The server's ordered `rows` (features.homeRows): rendered as sent — the order
 // and the choice of Discovery rows are the server's, never hard-coded here. The
-// server omits empty rows, and we skip any that arrive empty anyway.
+// server omits empty rows, and we skip any that arrive empty anyway, along with
+// any kind this client does not know (forward compatibility). When nothing is
+// left, Home shows one empty state instead.
+const KNOWN_KINDS: readonly string[] = ["continueWatching", "upNext", "myList", "recentlyAdded", "discovery"];
 const BUILT_IN_TEST_IDS: Partial<Record<HomeRow["kind"], string>> = {
   continueWatching: "home-continue-watching",
   upNext: "home-up-next",
@@ -72,7 +75,16 @@ const BUILT_IN_TEST_IDS: Partial<Record<HomeRow["kind"], string>> = {
 };
 
 function HomeRows({ rows }: { rows: HomeRow[] }) {
-  const shown = rows.filter((r) => r.titles.length + r.shows.length > 0);
+  const shown = rows.filter(
+    (r) => KNOWN_KINDS.includes(r.kind) && r.titles.length + r.shows.length > 0,
+  );
+  if (shown.length === 0) {
+    return (
+      <p className="status status-loading" data-testid="home-empty">
+        Nothing added yet. Scan a library to fill this in.
+      </p>
+    );
+  }
   return (
     <div data-testid="home-rows">
       {shown.map((r, i) => {

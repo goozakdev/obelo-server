@@ -246,6 +246,68 @@ describe("HomeScreen", () => {
       expect(within(screen.getByTestId("home-continue-watching")).queryByTestId("home-row-see-all")).toBeNull();
     });
 
+    it("shows one Home-level empty state when rows is empty", async () => {
+      getHome.mockResolvedValue(rows({ rows: [] }));
+      renderHome();
+      const empty = await screen.findByTestId("home-empty");
+      expect(empty).toHaveTextContent("Nothing added yet. Scan a library to fill this in.");
+      expect(screen.getByTestId("browse-link")).toHaveAttribute("href", "/libraries");
+    });
+
+    it("shows the empty state when every row has zero items", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "continueWatching", title: "Continue Watching", titles: [], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      expect(await screen.findByTestId("home-empty")).toBeInTheDocument();
+      expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    });
+
+    it("shows no empty state when at least one row has items", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "upNext", title: "Up Next", titles: [], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [t("r1", "Zulu")], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      await screen.findByTestId("home-recently-added");
+      expect(screen.queryByTestId("home-empty")).toBeNull();
+    });
+
+    it("skips a row with an unknown kind", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "futureShelf" as never, title: "Future Shelf", titles: [t("f1", "Mystery")], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [t("r1", "Zulu")], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      await screen.findByTestId("home-recently-added");
+      expect(screen.queryByText("Future Shelf")).toBeNull();
+      expect(screen.queryByText("Mystery")).toBeNull();
+    });
+
+    it("shows the empty state when the only row has an unknown kind", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [{ kind: "futureShelf" as never, title: "Future Shelf", titles: [t("f1", "Mystery")], shows: [] }],
+        }),
+      );
+      renderHome();
+      expect(await screen.findByTestId("home-empty")).toBeInTheDocument();
+      expect(screen.queryByText("Mystery")).toBeNull();
+    });
+
     it("falls back to the three legacy rows when rows is absent", async () => {
       getHome.mockResolvedValue(rows());
       renderHome();
