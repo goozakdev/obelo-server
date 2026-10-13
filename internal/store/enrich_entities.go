@@ -878,6 +878,20 @@ func (db *DB) WriteEntityMetadata(entityType, entityID string, edit EntityMetada
 		if err := setStr("network", "network", *edit.Network); err != nil {
 			return err
 		}
+		// The edit names one network, so it becomes the whole set.
+		if _, err := tx.Exec(
+			`DELETE FROM entity_networks WHERE entity_type = ? AND entity_id = ?`, entityType, entityID,
+		); err != nil {
+			return fmt.Errorf("store: clearing entity networks: %w", err)
+		}
+		for i, n := range studioSet(nil, *edit.Network) {
+			if _, err := tx.Exec(
+				`INSERT INTO entity_networks (entity_type, entity_id, network, ord) VALUES (?, ?, ?, ?)`,
+				entityType, entityID, n, i,
+			); err != nil {
+				return fmt.Errorf("store: inserting entity network %q: %w", n, err)
+			}
+		}
 	}
 	if edit.Genres != nil {
 		if _, err := tx.Exec(

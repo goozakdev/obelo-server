@@ -196,3 +196,33 @@ func TestTheMirrorCarriesTheStudioList(t *testing.T) {
 		t.Errorf("old-sharer studios = %v, want [Old]", got)
 	}
 }
+
+func TestAHandEditedNetworkBecomesTheWholeSet(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('lib', 'TV', 'tv')`)
+	mustExec(t, db, `INSERT INTO shows (id, library_id, title, identity_key, sort_title) VALUES ('sh1', 'lib', 'Show', 'show', 'show')`)
+	if err := db.WriteEntityEnrichment(store.EntityShow, "sh1", store.EntityEnrichmentWrite{
+		Network: "HBO", Networks: []string{"HBO", "Max"}, Source: "tmdb",
+	}, nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	mine := "Netflix"
+	if err := db.WriteEntityMetadata(store.EntityShow, "sh1", store.EntityMetadataEdit{Network: &mine}); err != nil {
+		t.Fatalf("WriteEntityMetadata: %v", err)
+	}
+	got, _ := db.NetworksForEntities(store.EntityShow, []string{"sh1"})
+	if !reflect.DeepEqual(got["sh1"], []string{"Netflix"}) {
+		t.Errorf("networks after hand edit = %v, want [Netflix]", got["sh1"])
+	}
+
+	// The edit locked the network, so a later enrichment pass leaves the set alone.
+	if err := db.WriteEntityEnrichment(store.EntityShow, "sh1", store.EntityEnrichmentWrite{
+		Network: "HBO", Networks: []string{"HBO", "Max"}, Source: "tmdb",
+	}, map[string]bool{"network": true}); err != nil {
+		t.Fatalf("locked write: %v", err)
+	}
+	got, _ = db.NetworksForEntities(store.EntityShow, []string{"sh1"})
+	if !reflect.DeepEqual(got["sh1"], []string{"Netflix"}) {
+		t.Errorf("networks after locked pass = %v, want [Netflix]", got["sh1"])
+	}
+}
