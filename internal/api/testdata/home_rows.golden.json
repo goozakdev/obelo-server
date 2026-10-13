@@ -1,0 +1,1586 @@
+{
+  "continueWatching": [
+    {
+      "id": "m07",
+      "kind": "movie",
+      "title": "Movie m07",
+      "year": 1987,
+      "addedAt": "2026-09-07T10:00:00Z",
+      "resumePositionMs": 60000,
+      "genres": [
+        "Comedy"
+      ]
+    }
+  ],
+  "upNext": [],
+  "recentlyAdded": [
+    {
+      "id": "m12",
+      "kind": "movie",
+      "title": "Movie m12",
+      "year": 1982,
+      "addedAt": "2026-09-12T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m11",
+      "kind": "movie",
+      "title": "Movie m11",
+      "year": 1981,
+      "addedAt": "2026-09-11T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m10",
+      "kind": "movie",
+      "title": "Movie m10",
+      "year": 1980,
+      "addedAt": "2026-09-10T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m09",
+      "kind": "movie",
+      "title": "Movie m09",
+      "year": 1989,
+      "addedAt": "2026-09-09T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m08",
+      "kind": "movie",
+      "title": "Movie m08",
+      "year": 1988,
+      "addedAt": "2026-09-08T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m07",
+      "kind": "movie",
+      "title": "Movie m07",
+      "year": 1987,
+      "addedAt": "2026-09-07T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m06",
+      "kind": "movie",
+      "title": "Movie m06",
+      "year": 1986,
+      "addedAt": "2026-09-06T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m05",
+      "kind": "movie",
+      "title": "Movie m05",
+      "year": 1985,
+      "addedAt": "2026-09-05T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m04",
+      "kind": "movie",
+      "title": "Movie m04",
+      "year": 1984,
+      "addedAt": "2026-09-04T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m03",
+      "kind": "movie",
+      "title": "Movie m03",
+      "year": 1983,
+      "addedAt": "2026-09-03T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m02",
+      "kind": "movie",
+      "title": "Movie m02",
+      "year": 1982,
+      "addedAt": "2026-09-02T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "m01",
+      "kind": "movie",
+      "title": "Movie m01",
+      "year": 1981,
+      "addedAt": "2026-09-01T10:00:00Z",
+      "genres": [
+        "Comedy"
+      ]
+    },
+    {
+      "id": "s10-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s10",
+        "showTitle": "Show s10",
+        "showYear": 1990,
+        "seasonId": "s10-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s09-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s09",
+        "showTitle": "Show s09",
+        "showYear": 1999,
+        "seasonId": "s09-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s08-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s08",
+        "showTitle": "Show s08",
+        "showYear": 1998,
+        "seasonId": "s08-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s07-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s07",
+        "showTitle": "Show s07",
+        "showYear": 1997,
+        "seasonId": "s07-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s06-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s06",
+        "showTitle": "Show s06",
+        "showYear": 1996,
+        "seasonId": "s06-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s05-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s05",
+        "showTitle": "Show s05",
+        "showYear": 1995,
+        "seasonId": "s05-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s04-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s04",
+        "showTitle": "Show s04",
+        "showYear": 1994,
+        "seasonId": "s04-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    },
+    {
+      "id": "s03-e1",
+      "kind": "episode",
+      "title": "ep",
+      "addedAt": "2026-01-01T00:00:00Z",
+      "episode": {
+        "showId": "s03",
+        "showTitle": "Show s03",
+        "showYear": 1993,
+        "seasonId": "s03-s1",
+        "seasonNumber": 1,
+        "episodeNumber": 1
+      }
+    }
+  ],
+  "rows": [
+    {
+      "kind": "continueWatching",
+      "title": "Continue Watching",
+      "items": [
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "resumePositionMs": 60000,
+          "genres": [
+            "Comedy"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "discovery",
+      "title": "On HBO",
+      "mediaKind": "tv",
+      "items": [
+        {
+          "id": "s04",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s04",
+          "year": 1994,
+          "identityKey": "s04",
+          "addedAt": "2026-08-04T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s06",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s06",
+          "year": 1996,
+          "identityKey": "s06",
+          "addedAt": "2026-08-06T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s07",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s07",
+          "year": 1997,
+          "identityKey": "s07",
+          "addedAt": "2026-08-07T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s09",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s09",
+          "year": 1999,
+          "identityKey": "s09",
+          "addedAt": "2026-08-09T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s05",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s05",
+          "year": 1995,
+          "identityKey": "s05",
+          "addedAt": "2026-08-05T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s03",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s03",
+          "year": 1993,
+          "identityKey": "s03",
+          "addedAt": "2026-08-03T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s08",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s08",
+          "year": 1998,
+          "identityKey": "s08",
+          "addedAt": "2026-08-08T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s02",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s02",
+          "year": 1992,
+          "identityKey": "s02",
+          "addedAt": "2026-08-02T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s01",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s01",
+          "year": 1991,
+          "identityKey": "s01",
+          "addedAt": "2026-08-01T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s10",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s10",
+          "year": 1990,
+          "identityKey": "s10",
+          "addedAt": "2026-08-10T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        }
+      ],
+      "source": {
+        "type": "network",
+        "value": "HBO",
+        "libraryIds": [
+          "tv"
+        ]
+      },
+      "total": 10
+    },
+    {
+      "kind": "myList",
+      "title": "My List",
+      "items": [
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending",
+          "itemId": "<uuid>"
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending",
+          "itemId": "<uuid>"
+        }
+      ]
+    },
+    {
+      "kind": "discovery",
+      "title": "80s Movies",
+      "mediaKind": "movie",
+      "items": [
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m03",
+          "kind": "movie",
+          "title": "Movie m03",
+          "year": 1983,
+          "addedAt": "2026-09-03T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "resumePositionMs": 60000,
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m10",
+          "kind": "movie",
+          "title": "Movie m10",
+          "year": 1980,
+          "addedAt": "2026-09-10T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m09",
+          "kind": "movie",
+          "title": "Movie m09",
+          "year": 1989,
+          "addedAt": "2026-09-09T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m01",
+          "kind": "movie",
+          "title": "Movie m01",
+          "year": 1981,
+          "addedAt": "2026-09-01T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m12",
+          "kind": "movie",
+          "title": "Movie m12",
+          "year": 1982,
+          "addedAt": "2026-09-12T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m11",
+          "kind": "movie",
+          "title": "Movie m11",
+          "year": 1981,
+          "addedAt": "2026-09-11T10:00:00Z",
+          "contentRating": "R",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m04",
+          "kind": "movie",
+          "title": "Movie m04",
+          "year": 1984,
+          "addedAt": "2026-09-04T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m06",
+          "kind": "movie",
+          "title": "Movie m06",
+          "year": 1986,
+          "addedAt": "2026-09-06T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m08",
+          "kind": "movie",
+          "title": "Movie m08",
+          "year": 1988,
+          "addedAt": "2026-09-08T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        }
+      ],
+      "source": {
+        "type": "decade",
+        "value": "1980",
+        "libraryIds": [
+          "mA"
+        ]
+      },
+      "total": 12
+    },
+    {
+      "kind": "recentlyAdded",
+      "title": "Recently Added",
+      "items": [
+        {
+          "id": "m12",
+          "kind": "movie",
+          "title": "Movie m12",
+          "year": 1982,
+          "addedAt": "2026-09-12T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m11",
+          "kind": "movie",
+          "title": "Movie m11",
+          "year": 1981,
+          "addedAt": "2026-09-11T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m10",
+          "kind": "movie",
+          "title": "Movie m10",
+          "year": 1980,
+          "addedAt": "2026-09-10T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m09",
+          "kind": "movie",
+          "title": "Movie m09",
+          "year": 1989,
+          "addedAt": "2026-09-09T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m08",
+          "kind": "movie",
+          "title": "Movie m08",
+          "year": 1988,
+          "addedAt": "2026-09-08T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m06",
+          "kind": "movie",
+          "title": "Movie m06",
+          "year": 1986,
+          "addedAt": "2026-09-06T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m04",
+          "kind": "movie",
+          "title": "Movie m04",
+          "year": 1984,
+          "addedAt": "2026-09-04T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m03",
+          "kind": "movie",
+          "title": "Movie m03",
+          "year": 1983,
+          "addedAt": "2026-09-03T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "m01",
+          "kind": "movie",
+          "title": "Movie m01",
+          "year": 1981,
+          "addedAt": "2026-09-01T10:00:00Z",
+          "genres": [
+            "Comedy"
+          ]
+        },
+        {
+          "id": "s10-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s10",
+            "showTitle": "Show s10",
+            "showYear": 1990,
+            "seasonId": "s10-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s09-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s09",
+            "showTitle": "Show s09",
+            "showYear": 1999,
+            "seasonId": "s09-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s08-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s08",
+            "showTitle": "Show s08",
+            "showYear": 1998,
+            "seasonId": "s08-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s07-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s07",
+            "showTitle": "Show s07",
+            "showYear": 1997,
+            "seasonId": "s07-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s06-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s06",
+            "showTitle": "Show s06",
+            "showYear": 1996,
+            "seasonId": "s06-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s05-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s05",
+            "showTitle": "Show s05",
+            "showYear": 1995,
+            "seasonId": "s05-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s04-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s04",
+            "showTitle": "Show s04",
+            "showYear": 1994,
+            "seasonId": "s04-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        },
+        {
+          "id": "s03-e1",
+          "kind": "episode",
+          "title": "ep",
+          "addedAt": "2026-01-01T00:00:00Z",
+          "episode": {
+            "showId": "s03",
+            "showTitle": "Show s03",
+            "showYear": 1993,
+            "seasonId": "s03-s1",
+            "seasonNumber": 1,
+            "episodeNumber": 1
+          }
+        }
+      ]
+    },
+    {
+      "kind": "discovery",
+      "title": "From A24",
+      "mediaKind": "movie",
+      "items": [
+        {
+          "id": "m04",
+          "kind": "movie",
+          "title": "Movie m04",
+          "year": 1984,
+          "addedAt": "2026-09-04T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m09",
+          "kind": "movie",
+          "title": "Movie m09",
+          "year": 1989,
+          "addedAt": "2026-09-09T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m01",
+          "kind": "movie",
+          "title": "Movie m01",
+          "year": 1981,
+          "addedAt": "2026-09-01T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m10",
+          "kind": "movie",
+          "title": "Movie m10",
+          "year": 1980,
+          "addedAt": "2026-09-10T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m12",
+          "kind": "movie",
+          "title": "Movie m12",
+          "year": 1982,
+          "addedAt": "2026-09-12T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m11",
+          "kind": "movie",
+          "title": "Movie m11",
+          "year": 1981,
+          "addedAt": "2026-09-11T10:00:00Z",
+          "contentRating": "R",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m06",
+          "kind": "movie",
+          "title": "Movie m06",
+          "year": 1986,
+          "addedAt": "2026-09-06T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m08",
+          "kind": "movie",
+          "title": "Movie m08",
+          "year": 1988,
+          "addedAt": "2026-09-08T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "resumePositionMs": 60000,
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m03",
+          "kind": "movie",
+          "title": "Movie m03",
+          "year": 1983,
+          "addedAt": "2026-09-03T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        }
+      ],
+      "source": {
+        "type": "studio",
+        "value": "A24",
+        "libraryIds": [
+          "mA"
+        ]
+      },
+      "total": 12
+    },
+    {
+      "kind": "discovery",
+      "title": "Drama Shows",
+      "mediaKind": "tv",
+      "items": [
+        {
+          "id": "s07",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s07",
+          "year": 1997,
+          "identityKey": "s07",
+          "addedAt": "2026-08-07T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s03",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s03",
+          "year": 1993,
+          "identityKey": "s03",
+          "addedAt": "2026-08-03T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s10",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s10",
+          "year": 1990,
+          "identityKey": "s10",
+          "addedAt": "2026-08-10T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s04",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s04",
+          "year": 1994,
+          "identityKey": "s04",
+          "addedAt": "2026-08-04T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s02",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s02",
+          "year": 1992,
+          "identityKey": "s02",
+          "addedAt": "2026-08-02T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s01",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s01",
+          "year": 1991,
+          "identityKey": "s01",
+          "addedAt": "2026-08-01T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s05",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s05",
+          "year": 1995,
+          "identityKey": "s05",
+          "addedAt": "2026-08-05T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s06",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s06",
+          "year": 1996,
+          "identityKey": "s06",
+          "addedAt": "2026-08-06T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s09",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s09",
+          "year": 1999,
+          "identityKey": "s09",
+          "addedAt": "2026-08-09T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s08",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s08",
+          "year": 1998,
+          "identityKey": "s08",
+          "addedAt": "2026-08-08T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        }
+      ],
+      "source": {
+        "type": "genre",
+        "value": "Drama",
+        "libraryIds": [
+          "tv"
+        ]
+      },
+      "total": 10
+    },
+    {
+      "kind": "discovery",
+      "title": "Starring Tom Hanks",
+      "mediaKind": "movie",
+      "items": [
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m11",
+          "kind": "movie",
+          "title": "Movie m11",
+          "year": 1981,
+          "addedAt": "2026-09-11T10:00:00Z",
+          "contentRating": "R",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m12",
+          "kind": "movie",
+          "title": "Movie m12",
+          "year": 1982,
+          "addedAt": "2026-09-12T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m08",
+          "kind": "movie",
+          "title": "Movie m08",
+          "year": 1988,
+          "addedAt": "2026-09-08T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "resumePositionMs": 60000,
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m10",
+          "kind": "movie",
+          "title": "Movie m10",
+          "year": 1980,
+          "addedAt": "2026-09-10T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m06",
+          "kind": "movie",
+          "title": "Movie m06",
+          "year": 1986,
+          "addedAt": "2026-09-06T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m01",
+          "kind": "movie",
+          "title": "Movie m01",
+          "year": 1981,
+          "addedAt": "2026-09-01T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m03",
+          "kind": "movie",
+          "title": "Movie m03",
+          "year": 1983,
+          "addedAt": "2026-09-03T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m09",
+          "kind": "movie",
+          "title": "Movie m09",
+          "year": 1989,
+          "addedAt": "2026-09-09T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m04",
+          "kind": "movie",
+          "title": "Movie m04",
+          "year": 1984,
+          "addedAt": "2026-09-04T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        }
+      ],
+      "source": {
+        "type": "person",
+        "value": "tmdb:31",
+        "displayValue": "Tom Hanks",
+        "libraryIds": [
+          "mA"
+        ]
+      },
+      "total": 12
+    },
+    {
+      "kind": "discovery",
+      "title": "Comedy Movies",
+      "mediaKind": "movie",
+      "items": [
+        {
+          "id": "m03",
+          "kind": "movie",
+          "title": "Movie m03",
+          "year": 1983,
+          "addedAt": "2026-09-03T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m05",
+          "kind": "movie",
+          "title": "Movie m05",
+          "year": 1985,
+          "addedAt": "2026-09-05T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m06",
+          "kind": "movie",
+          "title": "Movie m06",
+          "year": 1986,
+          "addedAt": "2026-09-06T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m01",
+          "kind": "movie",
+          "title": "Movie m01",
+          "year": 1981,
+          "addedAt": "2026-09-01T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m04",
+          "kind": "movie",
+          "title": "Movie m04",
+          "year": 1984,
+          "addedAt": "2026-09-04T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m10",
+          "kind": "movie",
+          "title": "Movie m10",
+          "year": 1980,
+          "addedAt": "2026-09-10T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m12",
+          "kind": "movie",
+          "title": "Movie m12",
+          "year": 1982,
+          "addedAt": "2026-09-12T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m02",
+          "kind": "movie",
+          "title": "Movie m02",
+          "year": 1982,
+          "addedAt": "2026-09-02T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m07",
+          "kind": "movie",
+          "title": "Movie m07",
+          "year": 1987,
+          "addedAt": "2026-09-07T10:00:00Z",
+          "resumePositionMs": 60000,
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m09",
+          "kind": "movie",
+          "title": "Movie m09",
+          "year": 1989,
+          "addedAt": "2026-09-09T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m08",
+          "kind": "movie",
+          "title": "Movie m08",
+          "year": 1988,
+          "addedAt": "2026-09-08T10:00:00Z",
+          "contentRating": "PG",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        },
+        {
+          "id": "m11",
+          "kind": "movie",
+          "title": "Movie m11",
+          "year": 1981,
+          "addedAt": "2026-09-11T10:00:00Z",
+          "contentRating": "R",
+          "genres": [
+            "Comedy"
+          ],
+          "enrichmentStatus": "pending"
+        }
+      ],
+      "source": {
+        "type": "genre",
+        "value": "Comedy",
+        "libraryIds": [
+          "mA"
+        ]
+      },
+      "total": 12
+    },
+    {
+      "kind": "discovery",
+      "title": "90s Shows",
+      "mediaKind": "tv",
+      "items": [
+        {
+          "id": "s06",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s06",
+          "year": 1996,
+          "identityKey": "s06",
+          "addedAt": "2026-08-06T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s01",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s01",
+          "year": 1991,
+          "identityKey": "s01",
+          "addedAt": "2026-08-01T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s09",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s09",
+          "year": 1999,
+          "identityKey": "s09",
+          "addedAt": "2026-08-09T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s07",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s07",
+          "year": 1997,
+          "identityKey": "s07",
+          "addedAt": "2026-08-07T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s04",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s04",
+          "year": 1994,
+          "identityKey": "s04",
+          "addedAt": "2026-08-04T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s02",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s02",
+          "year": 1992,
+          "identityKey": "s02",
+          "addedAt": "2026-08-02T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s10",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s10",
+          "year": 1990,
+          "identityKey": "s10",
+          "addedAt": "2026-08-10T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s05",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s05",
+          "year": 1995,
+          "identityKey": "s05",
+          "addedAt": "2026-08-05T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s08",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s08",
+          "year": 1998,
+          "identityKey": "s08",
+          "addedAt": "2026-08-08T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        },
+        {
+          "id": "s03",
+          "libraryId": "tv",
+          "kind": "show",
+          "title": "Show s03",
+          "year": 1993,
+          "identityKey": "s03",
+          "addedAt": "2026-08-03T10:00:00Z",
+          "genres": [
+            "Drama"
+          ]
+        }
+      ],
+      "source": {
+        "type": "decade",
+        "value": "1990",
+        "libraryIds": [
+          "tv"
+        ]
+      },
+      "total": 10
+    }
+  ]
+}
+
