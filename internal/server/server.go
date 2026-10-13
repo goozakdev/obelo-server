@@ -120,6 +120,7 @@ func (m *Metadata) Features() map[string]bool {
 		"directPlay":     true,
 		"watchState":     true,
 		"home":           true,
+		"homeRows":       true,
 		"search":         true,
 		"collections":    true,
 		"playlists":      true,

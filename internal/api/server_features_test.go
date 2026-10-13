@@ -59,6 +59,7 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 	}{
 		{flag: "libraries", path: "/api/v1/libraries"},
 		{flag: "home", path: "/api/v1/home"},
+		{flag: "homeRows", path: "/api/v1/home"},
 		{flag: "watchState", path: "/api/v1/titles/nonexistent/watchState"},
 		{flag: "search", path: "/api/v1/search?q=x"},
 		{flag: "collections", path: "/api/v1/collections"},
