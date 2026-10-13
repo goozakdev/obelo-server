@@ -1760,6 +1760,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		ReleaseDate:    meta.ReleaseDate,
 		RuntimeMinutes: meta.RuntimeMinutes,
 		Studio:         meta.Studio,
+		Studios:        meta.Studios,
 		Source:         meta.Source,
 		Name:           name,
 		Genres:         meta.Genres,
@@ -2677,6 +2678,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 		Overview:      meta.Overview,
 		ContentRating: meta.ContentRating,
 		Network:       meta.Studio, // Studio carries the show network / album label
+		Networks:      meta.Studios,
 		Source:        meta.Source,
 		ExternalID:    rec.ID,
 		Namespace:     rec.Namespace,

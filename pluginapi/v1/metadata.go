@@ -142,13 +142,20 @@ type MetadataRecord struct {
 	// Overview as EMPTY, so a Supplement's real text replaces it where a real one
 	// would be kept (fill-only, ADR-0002). A source that holds real prose leaves it
 	// false, which is the zero value an older guest already sends.
-	OverviewSynthesized bool     `json:"overviewSynthesized,omitempty"`
-	Tagline             string   `json:"tagline,omitempty"`
-	ContentRating       string   `json:"contentRating,omitempty"`
-	ReleaseDate         string   `json:"releaseDate,omitempty"`
-	RuntimeMinutes      int      `json:"runtimeMinutes,omitempty"`
-	Studio              string   `json:"studio,omitempty"`
-	Genres              []string `json:"genres,omitempty"`
+	OverviewSynthesized bool   `json:"overviewSynthesized,omitempty"`
+	Tagline             string `json:"tagline,omitempty"`
+	ContentRating       string `json:"contentRating,omitempty"`
+	ReleaseDate         string `json:"releaseDate,omitempty"`
+	RuntimeMinutes      int    `json:"runtimeMinutes,omitempty"`
+	// Studio is the first Studio (a Movie's production company, a Show's network).
+	//
+	// Deprecated: send Studios, which carries every one. A guest that sets only
+	// Studio still works: the host reads it as the one-element list [Studio].
+	Studio string `json:"studio,omitempty"`
+	// Studios is every Studio (a Movie's production companies, a Show's networks), in
+	// the source's order. Additive: a guest built before it sent only Studio.
+	Studios []string `json:"studios,omitempty"`
+	Genres  []string `json:"genres,omitempty"`
 
 	Cast    []Credit     `json:"cast,omitempty"`
 	Artwork []ArtworkRef `json:"artwork,omitempty"`

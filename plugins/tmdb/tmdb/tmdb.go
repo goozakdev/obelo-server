@@ -521,8 +521,11 @@ func (p *Provider) movieDetails(ctx context.Context, s pluginapi.Settings, id st
 		ExternalID:     strconv.Itoa(m.ID),
 		Source:         Source,
 	}
-	if len(m.ProductionCompanies) > 0 {
-		rec.Studio = m.ProductionCompanies[0].Name
+	for _, c := range m.ProductionCompanies {
+		rec.Studios = append(rec.Studios, c.Name)
+	}
+	if len(rec.Studios) > 0 {
+		rec.Studio = rec.Studios[0]
 	}
 	for _, g := range m.Genres {
 		rec.Genres = append(rec.Genres, g.Name)
@@ -591,8 +594,11 @@ func (p *Provider) tvDetails(ctx context.Context, s pluginapi.Settings, id strin
 		ExternalID:    strconv.Itoa(m.ID),
 		Source:        Source,
 	}
-	if len(m.Networks) > 0 {
-		rec.Studio = m.Networks[0].Name // Studio carries the show's network
+	for _, n := range m.Networks {
+		rec.Studios = append(rec.Studios, n.Name) // Studios carries the show's networks
+	}
+	if len(rec.Studios) > 0 {
+		rec.Studio = rec.Studios[0]
 	}
 	for _, g := range m.Genres {
 		rec.Genres = append(rec.Genres, g.Name)

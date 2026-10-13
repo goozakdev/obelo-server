@@ -418,6 +418,7 @@ func metadataFromRecord(rec pluginapi.MetadataRecord) TitleMetadata {
 		ReleaseDate:         rec.ReleaseDate,
 		RuntimeMinutes:      rec.RuntimeMinutes,
 		Studio:              rec.Studio,
+		Studios:             rec.Studios,
 		Genres:              rec.Genres,
 		ExternalID:          rec.ExternalID,
 		Source:              rec.Source,

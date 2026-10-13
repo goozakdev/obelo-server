@@ -561,6 +561,66 @@ func (db *DB) GenresForTitles(titleIDs []string) (map[string][]string, error) {
 	return out, rows.Err()
 }
 
+// StudiosForTitles bulk-reads every Studio for a page of Titles, in the provider's
+// order, keyed by Title id (absent = none). Mirrors GenresForTitles (no N+1).
+func (db *DB) StudiosForTitles(titleIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(titleIDs) == 0 {
+		return out, nil
+	}
+	ph := placeholders(len(titleIDs))
+	args := make([]any, len(titleIDs))
+	for i, id := range titleIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		`SELECT title_id, studio FROM title_studios
+		   WHERE title_id IN (`+ph+`) ORDER BY title_id, ord, studio`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading studios: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, s string
+		if err := rows.Scan(&id, &s); err != nil {
+			return nil, fmt.Errorf("store: scanning bulk studio: %w", err)
+		}
+		out[id] = append(out[id], s)
+	}
+	return out, rows.Err()
+}
+
+// studioSet is the list a pass stores: the provider's Studios when it sent any,
+// otherwise the single Studio (a guest built against the old contract), with empty
+// names dropped.
+func studioSet(studios []string, single string) []string {
+	if len(studios) == 0 {
+		studios = []string{single}
+	}
+	out := make([]string, 0, len(studios))
+	for _, s := range studios {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// replaceTitleStudios rewrites a Title's Studio rows to exactly studios.
+func replaceTitleStudios(tx *sql.Tx, titleID string, studios []string) error {
+	if _, err := tx.Exec(`DELETE FROM title_studios WHERE title_id = ?`, titleID); err != nil {
+		return fmt.Errorf("store: clearing studios: %w", err)
+	}
+	for i, s := range studios {
+		if _, err := tx.Exec(
+			`INSERT INTO title_studios (title_id, studio, ord) VALUES (?, ?, ?)`, titleID, s, i,
+		); err != nil {
+			return fmt.Errorf("store: inserting studio %q: %w", s, err)
+		}
+	}
+	return nil
+}
+
 // ArtworkVersionsForTitles bulk-reads a per-Title artwork "version" for a page of
 // Titles, keyed by id (absent = the Title has no artwork). The version is the
 // newest added_at across the Title's artwork rows — and because a (re-)enrich
@@ -686,6 +746,10 @@ func (db *DB) WriteTitleMetadata(titleID string, edit MetadataEdit) error {
 	}
 	if edit.Studio != nil {
 		if err := setStr("studio", "studio", *edit.Studio); err != nil {
+			return err
+		}
+		// The edit names one Studio, so it becomes the whole set.
+		if err := replaceTitleStudios(tx, titleID, studioSet(nil, *edit.Studio)); err != nil {
 			return err
 		}
 	}
@@ -923,7 +987,10 @@ type TitleEnrichment struct {
 	ReleaseDate    string
 	RuntimeMinutes int
 	Studio         string
-	Source         string // provider id, e.g. "tmdb"
+	// Studios is every Studio, in order. Empty means [Studio]. Locked as a whole
+	// with the "studio" field; Studio (the denormalized first) is written from it.
+	Studios []string
+	Source  string // provider id, e.g. "tmdb"
 	// Name is the canonical DISPLAY title for an Episode/Track (written to
 	// enriched_title) — never identity. Empty leaves enriched_title unchanged, so
 	// a Movie (no canonical name) keeps its parsed title as the display title.
@@ -1001,7 +1068,12 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	tagline := pick("tagline", e.Tagline, cur.Tagline)
 	contentRating := pick("content_rating", e.ContentRating, cur.ContentRating)
 	releaseDate := pick("release_date", e.ReleaseDate, cur.ReleaseDate)
-	studio := pick("studio", e.Studio, cur.Studio)
+	studios := studioSet(e.Studios, e.Studio)
+	newStudio := e.Studio
+	if len(studios) > 0 {
+		newStudio = studios[0]
+	}
+	studio := pick("studio", newStudio, cur.Studio)
 	runtime := e.RuntimeMinutes
 	if locks["runtime_minutes"] {
 		runtime = cur.RuntimeMinutes
@@ -1031,6 +1103,12 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	}
 	if err := writeIDs(tx, titleID, e.ExternalIDs); err != nil {
 		return err
+	}
+
+	if !locks["studio"] {
+		if err := replaceTitleStudios(tx, titleID, studios); err != nil {
+			return err
+		}
 	}
 
 	// Genres + cast: rebuilt wholesale (idempotent) unless the group is locked.

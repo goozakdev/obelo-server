@@ -326,6 +326,9 @@ type TitleMetadata struct {
 	ReleaseDate         string
 	RuntimeMinutes      int
 	Studio              string
+	// Studios is every Studio / Network in order; empty means [Studio] (a guest built
+	// before the list existed).
+	Studios []string
 
 	Genres  []string
 	Cast    []Credit
