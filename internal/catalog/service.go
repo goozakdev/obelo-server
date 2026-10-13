@@ -976,10 +976,25 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 		recentlyAdded.Titles = append(recentlyAdded.Titles, ht)
 	}
 
-	// Decorate every Home leaf with its enrichment (overview/genres/display title)
-	// in two bulk reads — the Home queries use the lean Title projection, so this
-	// is how enrichment reaches the Home surface (issue 03).
-	rows := []*HomeRow{&continueWatching, &upNext, &recentlyAdded}
+	s.decorateHomeRows([]*HomeRow{&continueWatching, &upNext, &recentlyAdded})
+	return continueWatching, upNext, recentlyAdded, nil
+}
+
+// HomeTitles shapes the Titles as Home leaves in the given order, decorated exactly
+// as the Home rows are: parent context for Episodes and Tracks, plus enrichment.
+func (s *Service) HomeTitles(titles []store.Title) []HomeTitle {
+	row := HomeRow{Titles: make([]HomeTitle, 0, len(titles))}
+	for _, t := range titles {
+		row.Titles = append(row.Titles, HomeTitle{Title: t})
+	}
+	s.decorateHomeRows([]*HomeRow{&row})
+	return row.Titles
+}
+
+// decorateHomeRows attaches parent context and enrichment (overview/genres/display
+// title) to every leaf in two bulk reads each — the Home queries use the lean Title
+// projection, so this is how enrichment reaches the Home surface (issue 03).
+func (s *Service) decorateHomeRows(rows []*HomeRow) {
 	s.attachHomeContexts(rows)
 	var ids []string
 	for _, row := range rows {
@@ -999,7 +1014,6 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 			row.Titles[i].Genres = genres[row.Titles[i].ID]
 		}
 	}
-	return continueWatching, upNext, recentlyAdded, nil
 }
 
 // homeContextReader is the optional bulk read behind attachHomeContexts. *store.DB

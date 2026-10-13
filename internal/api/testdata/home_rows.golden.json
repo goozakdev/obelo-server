@@ -410,12 +410,9 @@
           "title": "Movie m05",
           "year": 1985,
           "addedAt": "2026-09-05T10:00:00Z",
-          "contentRating": "PG",
           "genres": [
             "Comedy"
-          ],
-          "enrichmentStatus": "pending",
-          "itemId": "<uuid>"
+          ]
         },
         {
           "id": "m02",
@@ -423,12 +420,9 @@
           "title": "Movie m02",
           "year": 1982,
           "addedAt": "2026-09-02T10:00:00Z",
-          "contentRating": "PG",
           "genres": [
             "Comedy"
-          ],
-          "enrichmentStatus": "pending",
-          "itemId": "<uuid>"
+          ]
         }
       ]
     },

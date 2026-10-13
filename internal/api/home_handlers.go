@@ -224,9 +224,9 @@ func buildHomeRows(deps Deps, scope access.Scope, userID string, day time.Time, 
 }
 
 // myListMembers is the caller's Watchlist in Watchlist order, resolved through
-// their access Scope and Rating ceiling and decorated exactly as GET /watchlist
-// does, capped to the Home row length.
-func myListMembers(deps Deps, scope access.Scope, userID string) ([]playlistMemberJSON, error) {
+// their access Scope and Rating ceiling and shaped like the other built-in rows
+// (so an Episode carries its parent context), capped to the Home row length.
+func myListMembers(deps Deps, scope access.Scope, userID string) ([]homeTitleJSON, error) {
 	wl, err := deps.Organize.Watchlist(userID)
 	if err != nil {
 		return nil, err
@@ -238,7 +238,24 @@ func myListMembers(deps Deps, scope access.Scope, userID string) ([]playlistMemb
 	if len(members) > homeRowLimit {
 		members = members[:homeRowLimit]
 	}
-	return decoratePlaylistMembers(deps, userID, members)
+	titles := make([]store.Title, 0, len(members))
+	for _, m := range members {
+		titles = append(titles, m.Title)
+	}
+	var albumIDs []string
+	home := deps.Catalog.HomeTitles(titles)
+	for _, t := range home {
+		if t.Track != nil {
+			albumIDs = append(albumIDs, t.Track.AlbumID)
+		}
+	}
+	albumVersions, _ := deps.Catalog.EntityArtworkVersions(store.EntityAlbum, albumIDs)
+	linked := loadLinkedState(deps)
+	out := make([]homeTitleJSON, 0, len(home))
+	for _, t := range home {
+		out = append(out, toHomeTitle(t, linked, albumVersions))
+	}
+	return out, nil
 }
 
 // discoveryRowsJSON shapes the engine's rows: Movie rows as browse title
@@ -329,10 +346,10 @@ func discoveryRowTitle(typ, value, display, mediaKind string) string {
 		return "Starring " + display
 	case "decade":
 		if y, err := strconv.Atoi(value); err == nil {
-			if y >= 2000 {
-				return value + "s " + noun
+			if y >= 1920 && y < 2000 {
+				return strconv.Itoa(y%100) + "s " + noun
 			}
-			return strconv.Itoa(y%100) + "s " + noun
+			return value + "s " + noun
 		}
 	}
 	return value + " " + noun

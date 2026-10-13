@@ -259,6 +259,43 @@ func TestHomeRowsMyListNeverShowsAboveTheRatingCeiling(t *testing.T) {
 	}
 }
 
+func TestHomeRowsMyListEpisodeCarriesItsParentContext(t *testing.T) {
+	t.Parallel()
+	f := newHomeRowsFixture(t)
+	all := access.AllAccess()
+	f.watchlist("u1", all, "s01-e1") // a Playlist holds one media kind
+	var v struct {
+		Rows []struct {
+			Kind  string `json:"kind"`
+			Items []struct {
+				ID      string `json:"id"`
+				Episode *struct {
+					ShowTitle     string `json:"showTitle"`
+					SeasonNumber  int    `json:"seasonNumber"`
+					EpisodeNumber int    `json:"episodeNumber"`
+				} `json:"episode"`
+			} `json:"items"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(f.home("u1", all), &v); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range v.Rows {
+		if r.Kind != "myList" {
+			continue
+		}
+		if len(r.Items) != 1 || r.Items[0].ID != "s01-e1" {
+			t.Fatalf("My List items = %+v, want s01-e1", r.Items)
+		}
+		ep := r.Items[0].Episode
+		if ep == nil || ep.ShowTitle != "Show s01" || ep.SeasonNumber != 1 || ep.EpisodeNumber != 1 {
+			t.Errorf("Episode context = %+v, want Show s01 S1E1", ep)
+		}
+		return
+	}
+	t.Fatal("no myList row")
+}
+
 func TestHomeRowsDiscoveryRowShape(t *testing.T) {
 	t.Parallel()
 	f := newHomeRowsFixture(t)
@@ -299,6 +336,11 @@ func TestHomeRowsTitles(t *testing.T) {
 		{"network", "HBO", "HBO", "tv", "On HBO"},
 		{"decade", "1980", "1980", "movie", "80s Movies"},
 		{"decade", "2010", "2010", "tv", "2010s Shows"},
+		{"decade", "1900", "1900", "movie", "1900s Movies"},
+		{"decade", "1910", "1910", "movie", "1910s Movies"},
+		{"decade", "1920", "1920", "movie", "20s Movies"},
+		{"decade", "1990", "1990", "tv", "90s Shows"},
+		{"decade", "2000", "2000", "movie", "2000s Movies"},
 		{"person", "tmdb:31", "Tom Hanks", "movie", "Starring Tom Hanks"},
 	}
 	for _, c := range cases {
