@@ -28,6 +28,8 @@ var (
 type Store interface {
 	LibraryExists(id string) (bool, error)
 	LibraryByID(id string) (store.Library, error)
+	// DiscoveryCatalog is the Movie/Show facts the Discovery row engine groups by.
+	DiscoveryCatalog(userID string, filter store.AccessFilter) ([]store.DiscoveryItem, error)
 	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.TitlePage, error)
 	TitleByID(id string) (store.TitleDetail, error)
 	// FileByID loads one File (with Streams) by its stable id, or ErrNotFound —
