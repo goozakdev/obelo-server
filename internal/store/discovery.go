@@ -142,3 +142,51 @@ func closeRows(rows interface {
 	}
 	return err
 }
+
+// TitlesByIDs bulk-reads Titles by id, keyed by id (an unknown id is absent). It
+// applies no access scope: the caller passes ids it already resolved under one.
+func (db *DB) TitlesByIDs(ids []string) (map[string]Title, error) {
+	out := make(map[string]Title, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(
+		`SELECT `+enrichedTitleColumns+` FROM titles WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading titles: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		t, err := scanEnrichedTitle(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scanning title: %w", err)
+		}
+		out[t.ID] = t
+	}
+	return out, rows.Err()
+}
+
+// ShowsByIDs bulk-reads Shows by id, keyed by id (an unknown id is absent), with
+// the same no-scope contract as TitlesByIDs.
+func (db *DB) ShowsByIDs(ids []string) (map[string]Show, error) {
+	out := make(map[string]Show, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(
+		`SELECT id, library_id, title, year, identity_key, sort_title,
+		        tmdb_id, imdb_id, needs_review, hidden, added_at
+		   FROM shows WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading shows: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		s, err := scanShow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scanning show: %w", err)
+		}
+		out[s.ID] = s
+	}
+	return out, rows.Err()
+}

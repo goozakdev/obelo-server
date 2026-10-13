@@ -30,6 +30,9 @@ type Store interface {
 	LibraryByID(id string) (store.Library, error)
 	// DiscoveryCatalog is the Movie/Show facts the Discovery row engine groups by.
 	DiscoveryCatalog(userID string, filter store.AccessFilter) ([]store.DiscoveryItem, error)
+	// TitlesByIDs / ShowsByIDs bulk-read the entities of a Discovery row's items.
+	TitlesByIDs(ids []string) (map[string]store.Title, error)
+	ShowsByIDs(ids []string) (map[string]store.Show, error)
 	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.TitlePage, error)
 	TitleByID(id string) (store.TitleDetail, error)
 	// FileByID loads one File (with Streams) by its stable id, or ErrNotFound —

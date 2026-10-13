@@ -269,3 +269,14 @@ func arrangeNoAdjacent(cands []*discoveryCandidate) []*discoveryCandidate {
 	}
 	return out
 }
+
+// TitlesByIDs bulk-reads Titles by id for a caller that already resolved the ids
+// under the User's access Scope (a Discovery row's items), keyed by id.
+func (s *Service) TitlesByIDs(ids []string) (map[string]store.Title, error) {
+	return s.store.TitlesByIDs(ids)
+}
+
+// ShowsByIDs is TitlesByIDs for Shows.
+func (s *Service) ShowsByIDs(ids []string) (map[string]store.Show, error) {
+	return s.store.ShowsByIDs(ids)
+}
