@@ -212,6 +212,61 @@ func TestHomeRowsFollowTheInterleavePattern(t *testing.T) {
 	}
 }
 
+func myListIDs(t *testing.T, body []byte) []string {
+	t.Helper()
+	var got []string
+	for _, r := range decodeRows(t, body).Rows {
+		if r.Kind == "myList" {
+			for _, it := range r.Items {
+				got = append(got, it.ID)
+			}
+		}
+	}
+	return got
+}
+
+func TestHomeRowsMyListListsEachTitleOnce(t *testing.T) {
+	t.Parallel()
+	f := newHomeRowsFixture(t)
+	all := access.AllAccess()
+	f.watchlist("u1", all, "m05", "m02", "m05", "m07")
+	if got, want := myListIDs(t, f.home("u1", all)), []string{"m05", "m02", "m07"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("My List = %v, want %v", got, want)
+	}
+}
+
+func TestHomeRowsMyListCapAppliesAfterDedupe(t *testing.T) {
+	t.Parallel()
+	f := newHomeRowsFixture(t)
+	all := access.AllAccess()
+	// Ten more Movies make 22 distinct in the Library.
+	for i := 13; i <= 22; i++ {
+		id := fmt.Sprintf("m%02d", i)
+		f.exec(`INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title, year, content_rating, added_at)
+		        VALUES (?,'mA','movie',?,?,?,1985,'PG','2026-09-20 10:00:00')`, id, "Movie "+id, id, id)
+	}
+	// 25 entries, 20 distinct: m01..m05 twice, then m06..m20 once.
+	var ids []string
+	for i := 1; i <= 5; i++ {
+		ids = append(ids, fmt.Sprintf("m%02d", i), fmt.Sprintf("m%02d", i))
+	}
+	for i := 6; i <= 20; i++ {
+		ids = append(ids, fmt.Sprintf("m%02d", i))
+	}
+	f.watchlist("u1", all, ids...)
+	got := myListIDs(t, f.home("u1", all))
+	seen := map[string]bool{}
+	for _, id := range got {
+		if seen[id] {
+			t.Errorf("My List repeats %s: %v", id, got)
+		}
+		seen[id] = true
+	}
+	if len(got) != homeRowLimit {
+		t.Errorf("My List has %d Titles, want %d distinct: %v", len(got), homeRowLimit, got)
+	}
+}
+
 func TestHomeRowsEmptyMyListCollapses(t *testing.T) {
 	t.Parallel()
 	f := newHomeRowsFixture(t)

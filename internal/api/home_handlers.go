@@ -235,12 +235,19 @@ func myListMembers(deps Deps, scope access.Scope, userID string) ([]homeTitleJSO
 	if err != nil {
 		return nil, err
 	}
-	if len(members) > homeRowLimit {
-		members = members[:homeRowLimit]
-	}
-	titles := make([]store.Title, 0, len(members))
+	// A Watchlist may hold a Title more than once; the row lists it once, at its
+	// first position, and the cap applies to the distinct Titles.
+	titles := make([]store.Title, 0, min(len(members), homeRowLimit))
+	seen := make(map[string]bool, len(members))
 	for _, m := range members {
+		if seen[m.Title.ID] {
+			continue
+		}
+		seen[m.Title.ID] = true
 		titles = append(titles, m.Title)
+		if len(titles) == homeRowLimit {
+			break
+		}
 	}
 	var albumIDs []string
 	home := deps.Catalog.HomeTitles(titles)
