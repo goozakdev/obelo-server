@@ -76,7 +76,7 @@ type discoveryCandidate struct {
 }
 
 // DiscoveryRows returns the User's Discovery rows for the Server-local day of
-// day (its calendar date in day's own location), in display order. limit caps
+// day (its calendar date in time.Local, whatever zone day carries), in display order. limit caps
 // each row's Titles. The same (User, date) always yields the same rows and order;
 // the next date yields a different choice. Nothing is stored: rows are recomputed
 // from catalog metadata under the User's library access and Rating ceiling.
@@ -85,7 +85,7 @@ func (s *Service) DiscoveryRows(scope access.Scope, userID string, day time.Time
 	if err != nil {
 		return nil, err
 	}
-	seed := discoverySeed(userID, day.Format("2006-01-02"))
+	seed := discoverySeed(userID, day.In(time.Local).Format("2006-01-02"))
 
 	groups := map[discoveryKey]*discoveryCandidate{}
 	add := func(k discoveryKey, display string, it store.DiscoveryItem) {
@@ -93,6 +93,10 @@ func (s *Service) DiscoveryRows(scope access.Scope, userID string, day time.Time
 		if c == nil {
 			c = &discoveryCandidate{row: DiscoveryRow{Source: k.source, Value: k.value, DisplayValue: display, Kind: k.kind}}
 			groups[k] = c
+		}
+		// First-seen order is not stable, so a ref with several names takes the smallest.
+		if display < c.row.DisplayValue {
+			c.row.DisplayValue = display
 		}
 		c.items = append(c.items, it)
 	}

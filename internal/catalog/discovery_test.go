@@ -503,3 +503,51 @@ func TestDiscoveryRowsStayCheapOnA10kStore(t *testing.T) {
 		t.Errorf("worst call %v exceeds the (loaded-CI-tolerant) 500ms bound; the target is 150ms", worst)
 	}
 }
+
+// The Row-source cap in selection must keep a full 8 rows when arrangement would
+// otherwise have to trim a genre-heavy pick.
+func TestDiscoveryFillsEightRowsFromGenreHeavyMix(t *testing.T) {
+	f := newDiscFix(t)
+	for i := 0; i < 80; i++ {
+		f.movie(movie{id: fmt.Sprintf("m%02d", i), year: 1950 + 10*(i%4) + 1, genres: []string{fmt.Sprintf("G%d", i%10)}})
+	}
+	for d := 1; d <= 28; d++ {
+		if rows := f.rows("u1", access.AllAccess(), day(d)); len(rows) != 8 {
+			t.Fatalf("day %d: %d rows, want 8 (10 genre + 4 decade candidates allow 4+4)", d, len(rows))
+		}
+	}
+}
+
+// The seed date is the Server-local day whatever zone the caller's time carries.
+func TestDiscoveryUsesServerLocalDayForAnyCallerZone(t *testing.T) {
+	prev := time.Local
+	time.Local = time.FixedZone("test+13", 13*3600)
+	t.Cleanup(func() { time.Local = prev })
+
+	f := newDiscFix(t)
+	f.bigCatalog()
+	// 05:00 on the 14th Server-local is 16:00 on the 13th UTC: the dates differ.
+	local := time.Date(2026, time.October, 14, 5, 0, 0, 0, time.Local)
+	a := f.rows("u1", access.AllAccess(), local)
+	b := f.rows("u1", access.AllAccess(), local.UTC())
+	if !reflect.DeepEqual(a, b) {
+		t.Error("the same instant in Local and UTC produced different rows")
+	}
+}
+
+// An actor row's label is the lexically smallest name seen for the ref, not
+// whichever Title the store happened to return first.
+func TestDiscoveryActorDisplayNameIsSmallestNameSeen(t *testing.T) {
+	f := newDiscFix(t)
+	for i := 0; i < 8; i++ {
+		f.movie(movie{id: fmt.Sprintf("a%d", i), cast: []string{"p1"}})
+	}
+	f.exec(`UPDATE title_credits SET person = 'Zed' WHERE title_id = 'a0'`)
+	rows := f.rows("u1", access.AllAccess(), day(13))
+	if len(rows) != 1 || rows[0].Source != catalog.SourceActor {
+		t.Fatalf("rows = %+v, want one actor row", rows)
+	}
+	if got := rows[0].DisplayValue; got != "Name p1" {
+		t.Errorf("DisplayValue = %q, want %q", got, "Name p1")
+	}
+}
