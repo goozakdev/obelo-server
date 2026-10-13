@@ -28,7 +28,7 @@ var (
 type Store interface {
 	LibraryExists(id string) (bool, error)
 	LibraryByID(id string) (store.Library, error)
-	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, genre string, filter store.AccessFilter) (store.TitlePage, error)
+	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.TitlePage, error)
 	TitleByID(id string) (store.TitleDetail, error)
 	// FileByID loads one File (with Streams) by its stable id, or ErrNotFound —
 	// the lookup behind the sessionless direct-file download route. It carries no
@@ -135,7 +135,7 @@ type Store interface {
 	// TV browse (issue tv-music/01): the explicit Show → Season → Episode
 	// hierarchy. ListShows is the top-level grid for a TV Library; the rest drill
 	// down. EpisodeContextForTitle attaches parent context to an Episode detail.
-	ListShows(libraryID string, cursor *store.TitleCursor, limit int, genre string, filter store.AccessFilter) (store.ShowPage, error)
+	ListShows(libraryID string, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.ShowPage, error)
 	ShowByID(id string) (store.Show, error)
 	SeasonsForShow(showID string) ([]store.Season, error)
 	SeasonByID(id string) (store.Season, error)
@@ -263,6 +263,17 @@ type ListInput struct {
 	// Genre, when non-empty, filters the listing to Titles carrying that enriched
 	// genre (the filter[genre] browse param). An un-enriched Title has no genres.
 	Genre string
+	// Studio (Movie libraries), Network (TV libraries), Decade (first year of the
+	// decade, 0 = none) and Person (provider person ref, top-five billed cast) are
+	// the other browse filters. All combine with AND. Studio on a TV library or
+	// Network on a Movie library matches nothing.
+	Studio, Network, Person string
+	Decade                  int
+}
+
+// browseFilter is the store-level form of the listing filters.
+func (in ListInput) browseFilter() store.BrowseFilter {
+	return store.BrowseFilter{Genre: in.Genre, Studio: in.Studio, Network: in.Network, Decade: in.Decade, Person: in.Person}
 }
 
 // Page is one page of Title summaries plus the opaque cursor for the next page
@@ -332,7 +343,7 @@ func (s *Service) ListTitles(scope access.Scope, in ListInput) (Page, error) {
 		return Page{}, err
 	}
 
-	page, err := s.store.ListTitles(in.LibraryID, sortKind, cursor, limit, in.Genre, scope.StoreFilter())
+	page, err := s.store.ListTitles(in.LibraryID, sortKind, cursor, limit, in.browseFilter(), scope.StoreFilter())
 	if err != nil {
 		return Page{}, err
 	}
@@ -1105,7 +1116,7 @@ func (s *Service) ListShows(scope access.Scope, in ListInput) (ShowsPage, error)
 	if err != nil {
 		return ShowsPage{}, err
 	}
-	page, err := s.store.ListShows(in.LibraryID, cursor, limit, in.Genre, scope.StoreFilter())
+	page, err := s.store.ListShows(in.LibraryID, cursor, limit, in.browseFilter(), scope.StoreFilter())
 	if err != nil {
 		return ShowsPage{}, err
 	}

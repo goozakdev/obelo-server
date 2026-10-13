@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -877,6 +878,9 @@ func handleListTitles(deps Deps) http.HandlerFunc {
 			// metadata-enrichment). Absent → no filter.
 			Genre: q.Get("filter[genre]"),
 		}
+		if !applyBrowseFilters(w, q, &in) {
+			return
+		}
 		page, err := svc.ListTitles(scope, in)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
@@ -1648,6 +1652,24 @@ func parseSort(s string) catalog.Sort {
 	default:
 		return catalog.SortTitle
 	}
+}
+
+// applyBrowseFilters reads filter[studio|network|decade|person] into in. A
+// decade that is not a positive multiple of 10 writes 400 bad_request and
+// returns false.
+func applyBrowseFilters(w http.ResponseWriter, q url.Values, in *catalog.ListInput) bool {
+	in.Studio = q.Get("filter[studio]")
+	in.Network = q.Get("filter[network]")
+	in.Person = q.Get("filter[person]")
+	if d := q.Get("filter[decade]"); d != "" {
+		n, err := strconv.Atoi(d)
+		if err != nil || n <= 0 || n%10 != 0 {
+			writeError(w, http.StatusBadRequest, codeBadRequest, "filter[decade] must be a year that is a multiple of 10", nil)
+			return false
+		}
+		in.Decade = n
+	}
+	return true
 }
 
 // parseLimit parses the limit= param; 0 (defaulted/clamped by the service) on

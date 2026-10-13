@@ -546,8 +546,8 @@ Errors: `400 BAD_REQUEST` `"invalid cursor"` (garbled), `410 RESYNC` (a `since` 
 
 One route, three shapes by Library kind:
 
-- **movie** → `{ "titles": [ titleSummaryJSON ], "nextCursor"? }`. Query: `limit` (default 20, max 100), `cursor`, `sort` (`title` default; `dateAdded`/`addedAt`/`-addedAt`/`recent` = newest-first), `filter[genre]` (exact string).
-- **tv** → `{ "shows": [ showSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]` (no `sort`).
+- **movie** → `{ "titles": [ titleSummaryJSON ], "nextCursor"? }`. Query: `limit` (default 20, max 100), `cursor`, `sort` (`title` default; `dateAdded`/`addedAt`/`-addedAt`/`recent` = newest-first), `filter[genre]` (exact string), `filter[studio]` (exact; any of the Title's Studios), `filter[decade]` (`1980` = 1980–1989), `filter[person]` (provider person ref, matched only within the Title's top five billed cast). `filter[network]` on a Movie Library matches nothing (empty page, not an error). Filters combine with AND; a `filter[decade]` that is not a positive multiple of 10 → 400 `bad_request`.
+- **tv** → `{ "shows": [ showSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]`, `filter[network]` (exact; any of the Show's Networks), `filter[decade]` (first-air year), `filter[person]` (top five billed of the Show's own cast, never Episode guests) (no `sort`). `filter[studio]` on a TV Library matches nothing (empty page, not an error).
 - **music** → `{ "artists": [ artistSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]`.
 
 Errors: `400 BAD_REQUEST` `"invalid cursor"`, `404` (unknown/ungranted library).
