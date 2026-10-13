@@ -188,3 +188,87 @@ func TestShowFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestShowDecadeBoundsAreHalfOpen(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	seedBrowseShow(t, db, "y1979", 1979)
+	seedBrowseShow(t, db, "y1980", 1980)
+	seedBrowseShow(t, db, "y1989", 1989)
+	seedBrowseShow(t, db, "y1990", 1990)
+	mustExec(t, db, `INSERT INTO shows (id, library_id, title, identity_key, sort_title) VALUES ('noyear', 'tv', 'noyear', 'noyear', 'noyear')`)
+	if got := showIDs(t, db, store.BrowseFilter{Decade: 1980}); !reflect.DeepEqual(got, []string{"y1980", "y1989"}) {
+		t.Errorf("show decade=1980 = %v, want [y1980 y1989]", got)
+	}
+}
+
+func TestPersonFilterIgnoresCrewBilledAhead(t *testing.T) {
+	db := browseMovieDB(t)
+	seedBrowseTitle(t, db, "m", 2000)
+	for i := 0; i < 6; i++ {
+		mustExec(t, db, `INSERT INTO title_credits (title_id, person, person_ref, kind, ord) VALUES ('m', 'x', ?, 'crew', ?)`, fmt.Sprintf("crew-%d", i), i)
+	}
+	mustExec(t, db, `INSERT INTO title_credits (title_id, person, person_ref, kind, ord) VALUES ('m', 'x', 'actor', 'cast', 5)`)
+	if got := listTitleIDs(t, db, store.BrowseFilter{Person: "actor"}); !reflect.DeepEqual(got, []string{"m"}) {
+		t.Errorf("person=actor behind six crew rows (cast ord 5) = %v, want [m]", got)
+	}
+}
+
+func TestPersonFilterBreaksOrdTiesByInsertion(t *testing.T) {
+	db := browseMovieDB(t)
+	seedBrowseTitle(t, db, "movie", 2000)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	seedBrowseShow(t, db, "show", 2000)
+	for i := 0; i < 6; i++ {
+		ref := fmt.Sprintf("p%d", i)
+		mustExec(t, db, `INSERT INTO title_credits (title_id, person, person_ref, kind, ord) VALUES ('movie', 'x', ?, 'cast', 0)`, ref)
+		mustExec(t, db, `INSERT INTO entity_credits (id, entity_type, entity_id, person_ref, person, kind, ord) VALUES (?, 'show', 'show', ?, 'x', 'cast', 0)`,
+			fmt.Sprintf("c%d", i), ref)
+	}
+	for i, want := range []bool{true, true, true, true, true, false} {
+		ref := fmt.Sprintf("p%d", i)
+		if got := listTitleIDs(t, db, store.BrowseFilter{Person: ref}); (len(got) == 1) != want {
+			t.Errorf("movie person=%s (tie rank %d) = %v, want match=%v", ref, i, got, want)
+		}
+		if got := showIDs(t, db, store.BrowseFilter{Person: ref}); (len(got) == 1) != want {
+			t.Errorf("show person=%s (tie rank %d) = %v, want match=%v", ref, i, got, want)
+		}
+	}
+}
+
+func TestFiltersApplyUnderARatingCeiling(t *testing.T) {
+	db := browseMovieDB(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	capped := store.AccessFilter{AllLibraries: true, BlockedRatings: []string{"R", "TV-MA"}}
+
+	seedBrowseTitle(t, db, "mild", 1985)
+	seedBrowseTitle(t, db, "adult", 1985)
+	seedBrowseTitle(t, db, "mild-new", 2015)
+	mustExec(t, db, `UPDATE titles SET content_rating = 'PG' WHERE id = 'mild'`)
+	mustExec(t, db, `UPDATE titles SET content_rating = 'R' WHERE id = 'adult'`)
+	mustExec(t, db, `INSERT INTO title_studios (title_id, studio, ord) VALUES ('mild','A24',0),('adult','A24',0),('mild-new','A24',0)`)
+	page, err := db.ListTitles("lib", store.SortByTitle, nil, 100, store.BrowseFilter{Studio: "A24", Decade: 1980}, capped)
+	if err != nil {
+		t.Fatalf("ListTitles: %v", err)
+	}
+	if got := titleIDs(page.Titles); !reflect.DeepEqual(got, []string{"mild"}) {
+		t.Errorf("capped movie studio+decade = %v, want [mild]", got)
+	}
+
+	seedBrowseShow(t, db, "kids", 1985)
+	seedBrowseShow(t, db, "grim", 1985)
+	seedBrowseShow(t, db, "kids-new", 2015)
+	mustExec(t, db, `INSERT INTO entity_enrichment (entity_type, entity_id, content_rating) VALUES ('show','kids','TV-Y'),('show','grim','TV-MA')`)
+	mustExec(t, db, `INSERT INTO entity_networks (entity_type, entity_id, network, ord) VALUES ('show','kids','PBS',0),('show','grim','PBS',0),('show','kids-new','PBS',0)`)
+	spage, err := db.ListShows("tv", nil, 100, store.BrowseFilter{Network: "PBS", Decade: 1980}, capped)
+	if err != nil {
+		t.Fatalf("ListShows: %v", err)
+	}
+	var got []string
+	for _, s := range spage.Shows {
+		got = append(got, s.ID)
+	}
+	if !reflect.DeepEqual(got, []string{"kids"}) {
+		t.Errorf("capped show network+decade = %v, want [kids]", got)
+	}
+}
