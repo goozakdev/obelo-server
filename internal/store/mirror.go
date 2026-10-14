@@ -616,6 +616,15 @@ func (m *mirrorTx) writeTitle(id string, isNew bool, parent string, e MirrorEnti
 		return err
 	}
 
+	// A sharer that predates the list sends only `studio`: that one is the set.
+	studios := mirrorStrings(d, "studios")
+	if len(studios) == 0 {
+		studios = studioSet(nil, mirrorStr(d, "studio"))
+	}
+	if err := replaceTitleStudios(m.tx, id, studios); err != nil {
+		return err
+	}
+
 	if _, err := m.tx.Exec(`DELETE FROM title_genres WHERE title_id = ?`, id); err != nil {
 		return fmt.Errorf("store: clearing mirrored title genres: %w", err)
 	}
@@ -771,6 +780,25 @@ func (m *mirrorTx) writeEntityExtras(entityType, id string, d map[string]any) er
 			entityType, id, overview, rating, network, status,
 		); err != nil {
 			return fmt.Errorf("store: mirroring entity enrichment: %w", err)
+		}
+	}
+
+	// A sharer that predates the list sends only `network`: that one is the set.
+	networks := mirrorStrings(d, "networks")
+	if len(networks) == 0 {
+		networks = studioSet(nil, network)
+	}
+	if _, err := m.tx.Exec(
+		`DELETE FROM entity_networks WHERE entity_type = ? AND entity_id = ?`, entityType, id,
+	); err != nil {
+		return fmt.Errorf("store: clearing mirrored entity networks: %w", err)
+	}
+	for i, n := range networks {
+		if _, err := m.tx.Exec(
+			`INSERT INTO entity_networks (entity_type, entity_id, network, ord) VALUES (?,?,?,?)`,
+			entityType, id, n, i,
+		); err != nil {
+			return fmt.Errorf("store: mirroring entity network: %w", err)
 		}
 	}
 

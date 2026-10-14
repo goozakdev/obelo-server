@@ -111,15 +111,21 @@ type EntityEnrichmentWrite struct {
 	Overview      string
 	ContentRating string
 	Network       string
-	Source        string
-	ExternalID    string
+	// Networks is every network / label, in order. Empty means [Network]. Locked as a
+	// whole with "network"; Network (the denormalized first) is written from it.
+	Networks   []string
+	Source     string
+	ExternalID string
 	// Namespace is the namespace ExternalID belongs to (ADR-0060). Empty means "the
 	// source that resolved it" when Source is an Authoritative namespace, else the
 	// kind's default lead (`tmdb` for a Show/Season, `musicbrainz` for an
 	// Artist/Album).
 	Namespace string
-	Genres    []string
-	Artwork   []EntityArtworkRow
+	// Year is the provider's first-air year (0 when unknown). Only a Show takes it,
+	// and only as a fill: see WriteEntityEnrichment.
+	Year    int
+	Genres  []string
+	Artwork []EntityArtworkRow
 	// Cast is the parent's ordered cast (a Show's series main cast), rebuilt
 	// wholesale into entity_credits unless 'cast' is Locked — the parent analogue
 	// of a Title's title_credits (cast-photos/02). Empty for a parent kind that
@@ -171,7 +177,12 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 	}
 	overview := pick("overview", e.Overview, cur.Overview)
 	contentRating := pick("content_rating", e.ContentRating, cur.ContentRating)
-	network := pick("network", e.Network, cur.Network)
+	networks := studioSet(e.Networks, e.Network)
+	newNetwork := e.Network
+	if len(networks) > 0 {
+		newNetwork = networks[0]
+	}
+	network := pick("network", newNetwork, cur.Network)
 
 	if _, err := tx.Exec(
 		`INSERT INTO entity_enrichment
@@ -190,6 +201,35 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 		time.Now().UTC().Format(time.RFC3339), e.Source,
 	); err != nil {
 		return fmt.Errorf("store: upserting entity enrichment: %w", err)
+	}
+
+	// A Show whose folder name has no year takes the provider's (a year the folder
+	// carries, or an Admin set, is never replaced), and is then no longer a partial
+	// parse. needs_review is cleared for no other reason.
+	if entityType == EntityShow && e.Year > 0 {
+		if _, err := tx.Exec(
+			`UPDATE shows SET year = ?, year_from_metadata = 1, needs_review = 0
+			   WHERE id = ? AND (year IS NULL OR year_from_metadata = 1)`,
+			e.Year, entityID,
+		); err != nil {
+			return fmt.Errorf("store: filling show year: %w", err)
+		}
+	}
+
+	if !locks["network"] {
+		if _, err := tx.Exec(
+			`DELETE FROM entity_networks WHERE entity_type = ? AND entity_id = ?`, entityType, entityID,
+		); err != nil {
+			return fmt.Errorf("store: clearing entity networks: %w", err)
+		}
+		for i, n := range networks {
+			if _, err := tx.Exec(
+				`INSERT INTO entity_networks (entity_type, entity_id, network, ord) VALUES (?, ?, ?, ?)`,
+				entityType, entityID, n, i,
+			); err != nil {
+				return fmt.Errorf("store: inserting entity network %q: %w", n, err)
+			}
+		}
 	}
 
 	if !locks["genres"] {
@@ -854,6 +894,20 @@ func (db *DB) WriteEntityMetadata(entityType, entityID string, edit EntityMetada
 		if err := setStr("network", "network", *edit.Network); err != nil {
 			return err
 		}
+		// The edit names one network, so it becomes the whole set.
+		if _, err := tx.Exec(
+			`DELETE FROM entity_networks WHERE entity_type = ? AND entity_id = ?`, entityType, entityID,
+		); err != nil {
+			return fmt.Errorf("store: clearing entity networks: %w", err)
+		}
+		for i, n := range studioSet(nil, *edit.Network) {
+			if _, err := tx.Exec(
+				`INSERT INTO entity_networks (entity_type, entity_id, network, ord) VALUES (?, ?, ?, ?)`,
+				entityType, entityID, n, i,
+			); err != nil {
+				return fmt.Errorf("store: inserting entity network %q: %w", n, err)
+			}
+		}
 	}
 	if edit.Genres != nil {
 		if _, err := tx.Exec(
@@ -1065,6 +1119,35 @@ func (db *DB) ListAllArtists(libraryID string) ([]Artist, error) {
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// NetworksForEntities bulk-reads every network / label for a page of one entity
+// type, in the provider's order, keyed by entity id (absent = none).
+func (db *DB) NetworksForEntities(entityType string, ids []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := placeholders(len(ids))
+	args := []any{entityType}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := db.Query(
+		`SELECT entity_id, network FROM entity_networks
+		   WHERE entity_type = ? AND entity_id IN (`+ph+`) ORDER BY entity_id, ord, network`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading networks: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, n string
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("store: scanning bulk network: %w", err)
+		}
+		out[id] = append(out[id], n)
 	}
 	return out, rows.Err()
 }

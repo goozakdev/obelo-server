@@ -1141,6 +1141,47 @@ export interface HomeResponseRaw {
   continueWatching?: TitleSummaryRaw[];
   upNext?: TitleSummaryRaw[];
   recentlyAdded?: TitleSummaryRaw[];
+  /** The same surface as one ordered list (`features.homeRows`); absent from an
+   * older Server. */
+  rows?: HomeRowRaw[];
+}
+
+export type HomeRowKind =
+  | "continueWatching"
+  | "upNext"
+  | "myList"
+  | "recentlyAdded"
+  | "discovery";
+
+/** A Discovery row's source: `type` is the Library-browse filter name. */
+export interface HomeRowSource {
+  type: string;
+  value: string;
+  displayValue?: string;
+  libraryIds: string[];
+}
+
+/** Raw Home row: `items` are Show summaries on a TV Discovery row, Title
+ * summaries otherwise. */
+export interface HomeRowRaw {
+  kind: HomeRowKind;
+  title: string;
+  mediaKind?: "movie" | "tv";
+  items?: (TitleSummaryRaw | ShowSummaryRaw)[];
+  source?: HomeRowSource;
+  total?: number;
+}
+
+/** A normalized Home row: exactly one of `titles` / `shows` is populated (`shows`
+ * only for a TV Discovery row). */
+export interface HomeRow {
+  kind: HomeRowKind;
+  title: string;
+  mediaKind?: "movie" | "tv";
+  titles: TitleSummary[];
+  shows: ShowSummary[];
+  source?: HomeRowSource;
+  total?: number;
 }
 
 /** Normalized Home rows: each always an array of normalized {@link TitleSummary}.
@@ -1149,6 +1190,9 @@ export interface HomeRows {
   continueWatching: TitleSummary[];
   upNext: TitleSummary[];
   recentlyAdded: TitleSummary[];
+  /** The server's ordered rows; undefined from a Server without `homeRows`, in
+   * which case the three arrays above are rendered. */
+  rows?: HomeRow[];
 }
 
 /** How a grid is ordered. Maps to the API's `sort=` param (catalog parseSort):
@@ -1160,6 +1204,14 @@ export interface ListTitlesOptions {
   limit?: number;
   cursor?: string | null;
   sort?: TitleSort;
+  /** A Library-browse filter, sent as `filter[type]=value`. */
+  filter?: BrowseFilter;
+}
+
+/** An applied Library-browse filter (`filter[genre|studio|network|decade|person]`). */
+export interface BrowseFilter {
+  type: string;
+  value: string;
 }
 
 /** An elementary Stream inside a File (video/audio/subtitle; FFmpeg's sense). */

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { TitleSort, TitleSummary } from "../api/types";
+import type { BrowseFilter, TitleSort, TitleSummary } from "../api/types";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import { useAsync } from "./useAsync";
 import { useTitleGrid } from "./useTitleGrid";
@@ -15,6 +15,7 @@ import Poster from "./Poster";
 import PosterTile from "./PosterTile";
 import ShowGrid from "./ShowGrid";
 import AppHeader from "./AppHeader";
+import { filterFromSearch, filterToSearch } from "./homeRows";
 
 // A Library's poster grid (issue 03 / PRD user stories 9–11). This is the
 // TV/Movie grid: a Movie library renders the Title poster grid (cursor-paginated,
@@ -31,6 +32,24 @@ const SORTS: { value: TitleSort; label: string }[] = [
 
 export default function LibraryGridScreen() {
   const { libraryId = "" } = useParams();
+  // A filter applied by the URL (Home's "See all"): shown as a clearable chip.
+  const [search, setSearch] = useSearchParams();
+  const applied = filterFromSearch(search);
+  const filter = applied ? { type: applied.type, value: applied.value } : undefined;
+  const filterChip = applied ? (
+    <span className="filter-chip" data-testid="filter-chip">
+      <span>{applied.label}</span>
+      <button
+        type="button"
+        className="nav-link"
+        data-testid="filter-clear"
+        aria-label={`Clear filter ${applied.label}`}
+        onClick={() => setSearch(filterToSearch(search))}
+      >
+        &times;
+      </button>
+    </span>
+  ) : null;
   const lib = useAsync(
     (signal) => apiClient.getLibrary(libraryId, signal),
     [libraryId],
@@ -76,9 +95,19 @@ export default function LibraryGridScreen() {
             experience under /music — see the redirect above.) */}
         {lib.status === "ready" &&
           (lib.data.kind === "tv" ? (
-            <ShowGrid libraryId={libraryId} libraryName={lib.data.name} />
+            <ShowGrid
+              libraryId={libraryId}
+              libraryName={lib.data.name}
+              filter={filter}
+              filterChip={filterChip}
+            />
           ) : (
-            <MovieGrid libraryId={libraryId} libraryName={lib.data.name} />
+            <MovieGrid
+              libraryId={libraryId}
+              libraryName={lib.data.name}
+              filter={filter}
+              filterChip={filterChip}
+            />
           ))}
       </main>
     </div>
@@ -88,13 +117,17 @@ export default function LibraryGridScreen() {
 function MovieGrid({
   libraryId,
   libraryName,
+  filter,
+  filterChip,
 }: {
   libraryId: string;
   libraryName: string;
+  filter?: BrowseFilter;
+  filterChip?: ReactNode;
 }) {
   const [sort, setSort] = useState<TitleSort>("title");
   const [mode, setMode] = useLayoutMode(libraryId);
-  const grid = useTitleGrid(apiClient, libraryId, sort);
+  const grid = useTitleGrid(apiClient, libraryId, sort, undefined, filter);
   // Live-refresh: as this Library is scanned (Titles appearing) or enriched
   // (posters/fields landing), merge the fresh window in place — new Titles slot
   // in, enriched ones update, and per-Title poster cache-busting means only the
@@ -120,6 +153,7 @@ function MovieGrid({
         <h2 className="section-title" data-testid="library-title">
           {libraryName}
         </h2>
+        {filterChip}
         {sort === "title" && <LetterJumpBar onJump={jumpTo} />}
         <div className="grid-controls">
           <LayoutToggle mode={mode} onChange={setMode} />

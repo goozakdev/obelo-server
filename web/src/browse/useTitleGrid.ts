@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { ApiClient } from "../api/client";
-import type { TitleSort, TitleSummary } from "../api/types";
+import type { BrowseFilter, TitleSort, TitleSummary } from "../api/types";
 import { usePaginatedList } from "./usePaginatedList";
 
 // The Movie title grid's data hook (issue 03): cursor pagination over
@@ -39,17 +39,27 @@ export function useTitleGrid(
   libraryId: string,
   sort: TitleSort,
   pageSize?: number,
+  filter?: BrowseFilter,
 ): TitleGridState {
+  // Primitives, so an inline `{type, value}` object doesn't refetch every render.
+  const filterType = filter?.type;
+  const filterValue = filter?.value;
   const fetchPage = useCallback(
     async (cursor: string | null, signal: AbortSignal) => {
       const page = await client.listTitles(
         libraryId,
-        { cursor, sort, limit: pageSize },
+        {
+          cursor,
+          sort,
+          limit: pageSize,
+          filter:
+            filterType && filterValue ? { type: filterType, value: filterValue } : undefined,
+        },
         signal,
       );
       return { items: page.titles, nextCursor: page.nextCursor };
     },
-    [client, libraryId, sort, pageSize],
+    [client, libraryId, sort, pageSize, filterType, filterValue],
   );
 
   const { items, loading, loadingMore, hasMore, error, loadMore, retry, refresh } =

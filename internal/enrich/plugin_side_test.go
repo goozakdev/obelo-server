@@ -205,6 +205,7 @@ func recordFromMetadata(meta TitleMetadata) pluginapi.MetadataRecord {
 		ReleaseDate:    meta.ReleaseDate,
 		RuntimeMinutes: meta.RuntimeMinutes,
 		Studio:         meta.Studio,
+		Studios:        meta.Studios,
 		Genres:         meta.Genres,
 		ExternalID:     meta.ExternalID,
 		Source:         meta.Source,

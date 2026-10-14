@@ -609,6 +609,15 @@ func (db *DB) decorateExport(entities []ExportEntity) error {
 				e.Data["genres"] = g
 			}
 		}
+		studios, err := db.StudiosForTitles(titleIDs)
+		if err != nil {
+			return err
+		}
+		for id, st := range studios {
+			if e, ok := byTitle[id]; ok && len(st) > 0 {
+				e.Data["studios"] = st
+			}
+		}
 		credits, err := db.creditsForExportTitles(titleIDs)
 		if err != nil {
 			return err
@@ -905,6 +914,30 @@ func (db *DB) decorateExportEntities(keys []string, byEntity map[string]*ExportE
 		return fmt.Errorf("store: exporting entity genres: %w", err)
 	}
 	_ = gen.Close()
+
+	net, err := db.Query(
+		`SELECT entity_type, entity_id, network FROM entity_networks
+		  WHERE entity_type IN `+exportEntityTypes+` AND entity_id IN (`+ph+`)
+		  ORDER BY entity_id, ord, network`, args...)
+	if err != nil {
+		return fmt.Errorf("store: exporting entity networks: %w", err)
+	}
+	for net.Next() {
+		var typ, id, network string
+		if err := net.Scan(&typ, &id, &network); err != nil {
+			_ = net.Close()
+			return fmt.Errorf("store: scanning exported entity network: %w", err)
+		}
+		if e, ok := byEntity[typ+"\x00"+id]; ok {
+			existing, _ := e.Data["networks"].([]string)
+			e.Data["networks"] = append(existing, network)
+		}
+	}
+	if err := net.Err(); err != nil {
+		_ = net.Close()
+		return fmt.Errorf("store: exporting entity networks: %w", err)
+	}
+	_ = net.Close()
 
 	cre, err := db.Query(
 		`SELECT entity_type, entity_id, person, '' AS role, character, kind, person_ref

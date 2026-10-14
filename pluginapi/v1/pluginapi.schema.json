@@ -369,6 +369,12 @@
         "studio": {
           "type": "string"
         },
+        "studios": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "genres": {
           "type": "array",
           "items": {

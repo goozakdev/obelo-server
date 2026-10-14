@@ -10,6 +10,7 @@ package api
 import (
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/auth"
@@ -149,6 +150,10 @@ type Deps struct {
 	// issue 07, and issue 11 wires this to it. Nil means no Library here came over
 	// a Link, which is true of every Server until then.
 	LinkedLibrary func(libraryID string) bool
+	// Now is the clock the Home Discovery rows are seeded from (the Server-local
+	// day). Nil means time.Now; a test injects a fixed instant so the rows are
+	// reproducible.
+	Now func() time.Time
 	// Mirror is the mirror's read side (ADR-0056 §1, issue 07): which Libraries
 	// here came over a Link, whether the Server behind each is reachable, and the
 	// entity→Library resolution the writer guards need. *store.DB satisfies it;

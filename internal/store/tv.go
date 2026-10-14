@@ -184,7 +184,9 @@ func upsertShow(tx *sql.Tx, s Show) (string, error) {
 		// dismissed (reviewed = 1), where it stays cleared (mirrors the Title rule
 		// in writeTitleRow). reviewed is never written by the scanner. An Admin
 		// display-name edit Locks "title" (WriteEntityMetadata); a locked Show keeps
-		// its edited title and sort key across rescans.
+		// its edited title and sort key across rescans. A yearless folder keeps a year
+		// enrichment filled in (year_from_metadata) and its needs_review stays clear; a
+		// year the folder does carry always wins and resets the flag.
 		if _, err := tx.Exec(
 			`UPDATE shows SET
 			    title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
@@ -193,11 +195,18 @@ func upsertShow(tx *sql.Tx, s Show) (string, error) {
 			    sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
 			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
 			                 THEN sort_title ELSE ? END,
-			    year = ?, tmdb_id = ?, imdb_id = ?,
-			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
+			    year = CASE WHEN ? IS NOT NULL THEN ?
+			                WHEN year_from_metadata = 1 THEN year END,
+			    year_from_metadata = CASE WHEN ? IS NOT NULL THEN 0 ELSE year_from_metadata END,
+			    tmdb_id = ?, imdb_id = ?,
+			    needs_review = CASE WHEN reviewed = 1 THEN 0
+			                        WHEN ? IS NULL AND year_from_metadata = 1 THEN 0
+			                        ELSE ? END,
 			    hidden = 0 WHERE id = ?`,
-			s.Title, s.SortTitle, nullableYear(s.Year), s.TMDBID, s.IMDBID,
-			boolToInt(s.NeedsReview), showID,
+			s.Title, s.SortTitle,
+			nullableYear(s.Year), nullableYear(s.Year), nullableYear(s.Year),
+			s.TMDBID, s.IMDBID,
+			nullableYear(s.Year), boolToInt(s.NeedsReview), showID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating show: %w", err)
 		}
@@ -271,16 +280,35 @@ type ShowPage struct {
 // id (the same stable order Titles use), excluding hidden Shows, seeking strictly
 // past the cursor. It fetches limit+1 to detect HasMore. Each Show is the
 // top-level grid entry for a TV Library (the analogue of a Movie Title).
-func (db *DB) ListShows(libraryID string, cursor *TitleCursor, limit int, genre string, filter AccessFilter) (ShowPage, error) {
+func (db *DB) ListShows(libraryID string, cursor *TitleCursor, limit int, f BrowseFilter, filter AccessFilter) (ShowPage, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	args := []any{libraryID}
 	where := "library_id = ? AND hidden = 0"
 	// filter[genre]: keep only Shows carrying that enriched genre (issue 03).
-	if genre != "" {
+	if f.Genre != "" {
 		where += " AND id IN (SELECT entity_id FROM entity_genres WHERE entity_type = 'show' AND genre = ?)"
-		args = append(args, genre)
+		args = append(args, f.Genre)
+	}
+	// A Studio is a Movie concept: a TV browse filtered by one matches nothing.
+	if f.Studio != "" {
+		return ShowPage{}, nil
+	}
+	// filter[network]: any of the Show's Networks.
+	if f.Network != "" {
+		where += " AND id IN (SELECT entity_id FROM entity_networks WHERE entity_type = 'show' AND network = ?)"
+		args = append(args, f.Network)
+	}
+	if f.Decade > 0 {
+		where += " AND year >= ? AND year < ?"
+		args = append(args, f.Decade, f.Decade+10)
+	}
+	// filter[person]: only within the Show's own top five billed cast.
+	if f.Person != "" {
+		where += " AND EXISTS (SELECT 1 FROM entity_credits c WHERE c.entity_type = 'show' AND c.entity_id = shows.id AND " +
+			topBilledCast("entity_credits", "entity_id", "id", "AND o.entity_type = 'show'") + ")"
+		args = append(args, f.Person)
 	}
 	if cursor != nil {
 		where += " AND (sort_title, id) > (?, ?)"

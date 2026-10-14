@@ -1026,6 +1026,22 @@ body {
   margin-top: 1rem;
 }
 
+/* A Home row's "See all" sits under its heading, and the browse view's applied
+   filter is a small clearable pill beside the library name. */
+.home-row > .nav-link {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.625rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
 /* --- Badges (watch state, missing) ---------------------------------------- */
 .badge {
   display: inline-block;

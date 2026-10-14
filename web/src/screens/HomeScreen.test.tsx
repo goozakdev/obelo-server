@@ -192,4 +192,128 @@ describe("HomeScreen", () => {
     await waitFor(() => expect(screen.getByTestId("home-error")).toBeInTheDocument());
     expect(screen.getByTestId("home-error")).toHaveTextContent("failed to build home");
   });
+
+  describe("rows", () => {
+    const t = (id: string, title: string) => ({
+      id, kind: "movie" as const, title, year: 0, needsReview: false, ambiguous: false,
+      resumePositionMs: 0, watched: false, genres: [],
+    });
+    const show = (id: string, title: string) => ({
+      id, libraryId: "tv", kind: "show" as const, title, year: 0, needsReview: false,
+      unwatchedEpisodeCount: 0, overview: "", genres: [], cast: [],
+    });
+
+    it("renders rows in the server's order, ignoring the legacy arrays, and omits empty rows", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "continueWatching", title: "Continue Watching", titles: [t("c1", "Dune")], shows: [] },
+            { kind: "upNext", title: "Up Next", titles: [], shows: [] },
+            {
+              kind: "discovery", title: "From A24", mediaKind: "movie",
+              titles: [t("d1", "Heat")], shows: [],
+              source: { type: "studio", value: "A24", libraryIds: ["libA", "libB"] }, total: 12,
+            },
+            { kind: "myList", title: "My List", titles: [t("l1", "Alien")], shows: [] },
+            {
+              kind: "discovery", title: "On HBO", mediaKind: "tv",
+              titles: [], shows: [show("s1", "Succession")],
+              source: { type: "network", value: "HBO", libraryIds: ["tv"] },
+            },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [t("r1", "Zulu")], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      await screen.findByTestId("home-rows");
+
+      const heads = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+      expect(heads).toEqual(["Continue Watching", "From A24", "My List", "On HBO", "Recently Added"]);
+      expect(screen.queryByText("Up Next")).toBeNull();
+      // The legacy arrays' titles (Zulu is also legacy, Dune too) are not double-rendered.
+      expect(screen.getAllByText("Dune")).toHaveLength(1);
+
+      // A TV discovery row shows Show cards linking to Show detail.
+      const hbo = screen.getByTestId("home-row-3");
+      expect(within(hbo).getByRole("link", { name: /Succession/ })).toHaveAttribute("href", "/shows/s1");
+
+      // See all: Discovery -> filtered browse on the first Library; My List -> Playlists.
+      expect(within(screen.getByTestId("home-row-1")).getByTestId("home-row-see-all"))
+        .toHaveAttribute("href", "/libraries/libA?studio=A24");
+      expect(within(hbo).getByTestId("home-row-see-all")).toHaveAttribute("href", "/libraries/tv?network=HBO");
+      expect(within(screen.getByTestId("home-row-2")).getByTestId("home-row-see-all"))
+        .toHaveAttribute("href", "/playlists");
+      expect(within(screen.getByTestId("home-continue-watching")).queryByTestId("home-row-see-all")).toBeNull();
+    });
+
+    it("shows one Home-level empty state when rows is empty", async () => {
+      getHome.mockResolvedValue(rows({ rows: [] }));
+      renderHome();
+      const empty = await screen.findByTestId("home-empty");
+      expect(empty).toHaveTextContent("Nothing added yet. Scan a library to fill this in.");
+      expect(screen.getByTestId("browse-link")).toHaveAttribute("href", "/libraries");
+    });
+
+    it("shows the empty state when every row has zero items", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "continueWatching", title: "Continue Watching", titles: [], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      expect(await screen.findByTestId("home-empty")).toBeInTheDocument();
+      expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    });
+
+    it("shows no empty state when at least one row has items", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "upNext", title: "Up Next", titles: [], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [t("r1", "Zulu")], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      await screen.findByTestId("home-recently-added");
+      expect(screen.queryByTestId("home-empty")).toBeNull();
+    });
+
+    it("skips a row with an unknown kind", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [
+            { kind: "futureShelf" as never, title: "Future Shelf", titles: [t("f1", "Mystery")], shows: [] },
+            { kind: "recentlyAdded", title: "Recently Added", titles: [t("r1", "Zulu")], shows: [] },
+          ],
+        }),
+      );
+      renderHome();
+      await screen.findByTestId("home-recently-added");
+      expect(screen.queryByText("Future Shelf")).toBeNull();
+      expect(screen.queryByText("Mystery")).toBeNull();
+    });
+
+    it("shows the empty state when the only row has an unknown kind", async () => {
+      getHome.mockResolvedValue(
+        rows({
+          rows: [{ kind: "futureShelf" as never, title: "Future Shelf", titles: [t("f1", "Mystery")], shows: [] }],
+        }),
+      );
+      renderHome();
+      expect(await screen.findByTestId("home-empty")).toBeInTheDocument();
+      expect(screen.queryByText("Mystery")).toBeNull();
+    });
+
+    it("falls back to the three legacy rows when rows is absent", async () => {
+      getHome.mockResolvedValue(rows());
+      renderHome();
+      await screen.findByTestId("home-continue-watching");
+      expect(screen.queryByTestId("home-rows")).toBeNull();
+      expect(screen.getByTestId("home-recently-added")).toBeInTheDocument();
+    });
+  });
 });

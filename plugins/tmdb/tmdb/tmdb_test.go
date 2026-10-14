@@ -3,6 +3,7 @@ package tmdb
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -38,7 +39,7 @@ const movieDetailsJSON = `{
   "release_date": "2021-10-22",
   "runtime": 155,
   "genres": [{"name": "Science Fiction"}, {"name": "Adventure"}],
-  "production_companies": [{"name": "Legendary"}, {"name": "Warner Bros."}],
+  "production_companies": [{"name": "Legendary"}, {"name": "Warner Bros."}, {"name": "Villeneuve Films"}],
   "poster_path": "/poster.jpg",
   "backdrop_path": "/backdrop.jpg",
   "credits": {"cast": [
@@ -119,6 +120,9 @@ func TestTMDBLookupByID(t *testing.T) {
 	}
 	if rec.Studio != "Legendary" {
 		t.Errorf("studio = %q, want Legendary (first production company)", rec.Studio)
+	}
+	if want := []string{"Legendary", "Warner Bros.", "Villeneuve Films"}; !reflect.DeepEqual(rec.Studios, want) {
+		t.Errorf("studios = %v, want every production company in TMDB order %v", rec.Studios, want)
 	}
 	if len(rec.Genres) != 2 || rec.Genres[0] != "Science Fiction" {
 		t.Errorf("genres = %v", rec.Genres)

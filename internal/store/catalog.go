@@ -616,11 +616,19 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 		// files, so the Title is no longer hidden. The subtree is rebuilt by caller.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
 		// dismissed (reviewed = 1), where it stays cleared so the dismissal survives
-		// rescans. reviewed itself is never written by the scanner.
+		// rescans. reviewed itself is never written by the scanner. A yearless folder
+		// keeps a year enrichment filled in (year_from_metadata) with needs_review
+		// clear; a year the folder carries always wins and resets the flag.
 		if _, err := tx.Exec(
-			`UPDATE titles SET title = ?, year = ?, sort_title = ?,
+			`UPDATE titles SET title = ?,
+			    year = CASE WHEN ? IS NOT NULL THEN ?
+			                WHEN year_from_metadata = 1 THEN year END,
+			    year_from_metadata = CASE WHEN ? IS NOT NULL THEN 0 ELSE year_from_metadata END,
+			    sort_title = ?,
 			    tmdb_id = ?, imdb_id = ?,
-			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
+			    needs_review = CASE WHEN reviewed = 1 THEN 0
+			                        WHEN ? IS NULL AND year_from_metadata = 1 THEN 0
+			                        ELSE ? END,
 			    ambiguous = ?, hidden = 0,
 			    season_id = ?, season_number = ?, episode_number = ?, episode_label = ?,
 			    album_id = ?, disc_number = ?, track_number = ?,
@@ -631,9 +639,11 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    -- lives in title_external_ids and is untouched here (ADR-0045/0049).
 			    musicbrainz_recording_id = ?
 			  WHERE id = ?`,
-			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
+			tree.Title.Title,
+			nullableYear(tree.Year), nullableYear(tree.Year), nullableYear(tree.Year),
+			tree.SortTitle,
 			tree.TMDBID, tree.IMDBID,
-			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
+			nullableYear(tree.Year), boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
 			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 			titleID,
@@ -968,12 +978,39 @@ type TitleCursor struct {
 	ID      string
 }
 
+// BrowseFilter narrows a Library browse (Movie Titles or TV Shows). Every set
+// field is ANDed; the zero value filters nothing. Studio only applies to Movie
+// listings and Network only to TV listings: the wrong kind matches nothing, so
+// that browse is an empty page rather than an error.
+type BrowseFilter struct {
+	// Genre is an exact enriched genre.
+	Genre string
+	// Studio matches any of a Movie Title's Studios; Network any of a Show's.
+	Studio  string
+	Network string
+	// Decade is the first year of a decade (1980 = 1980-1989); 0 means no filter.
+	Decade int
+	// Person is a provider person ref, matched only within the top five billed
+	// cast of the Title (or of the Show itself, never its Episode guests).
+	Person string
+}
+
+// topBilledCast is the SQL fragment shared by the Movie and Show person filters:
+// a credit row `c` counts only when fewer than five other cast rows of the same
+// owner are billed ahead of it (lower ord, ties broken by tiebreak column).
+// ownerScope is extra SQL narrowing the ranked rows to the same owner kind.
+func topBilledCast(table, ownerCol, tiebreak, ownerScope string) string {
+	return fmt.Sprintf(`c.person_ref = ? AND c.kind = 'cast'
+		AND (SELECT COUNT(*) FROM %[1]s o WHERE o.%[2]s = c.%[2]s AND o.kind = 'cast' %[4]s
+		       AND (o.ord < c.ord OR (o.ord = c.ord AND o.%[3]s < c.%[3]s))) < 5`, table, ownerCol, tiebreak, ownerScope)
+}
+
 // ListTitles returns one page of Titles in the given Library, ordered by sort,
 // starting strictly after cursor (nil for the first page), at most limit rows.
 // It fetches limit+1 to detect HasMore without a separate count. The seek
 // predicate uses the composite (sortKey, id) so pagination is stable as the
 // catalog mutates between pages.
-func (db *DB) ListTitles(libraryID string, sort TitleSort, cursor *TitleCursor, limit int, genre string, filter AccessFilter) (TitlePage, error) {
+func (db *DB) ListTitles(libraryID string, sort TitleSort, cursor *TitleCursor, limit int, f BrowseFilter, filter AccessFilter) (TitlePage, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -998,9 +1035,28 @@ func (db *DB) ListTitles(libraryID string, sort TitleSort, cursor *TitleCursor, 
 	where := "library_id = ? AND hidden = 0"
 	// filter[genre]: keep only Titles carrying that enriched genre (external-
 	// metadata-enrichment). An un-enriched Title has no genres, so it is excluded.
-	if genre != "" {
+	if f.Genre != "" {
 		where += " AND EXISTS (SELECT 1 FROM title_genres g WHERE g.title_id = titles.id AND g.genre = ?)"
-		args = append(args, genre)
+		args = append(args, f.Genre)
+	}
+	// A Network is a TV concept: a Movie browse filtered by one matches nothing.
+	if f.Network != "" {
+		return TitlePage{}, nil
+	}
+	// filter[studio]: any of the Title's Studios.
+	if f.Studio != "" {
+		where += " AND EXISTS (SELECT 1 FROM title_studios s WHERE s.title_id = titles.id AND s.studio = ?)"
+		args = append(args, f.Studio)
+	}
+	if f.Decade > 0 {
+		where += " AND year >= ? AND year < ?"
+		args = append(args, f.Decade, f.Decade+10)
+	}
+	// filter[person]: only within the Title's top five billed cast.
+	if f.Person != "" {
+		where += " AND EXISTS (SELECT 1 FROM title_credits c WHERE c.title_id = titles.id AND " +
+			topBilledCast("title_credits", "title_id", "rowid", "") + ")"
+		args = append(args, f.Person)
 	}
 	if cursor != nil {
 		// Row-value comparison against the (key, id) tuple gives a clean strict

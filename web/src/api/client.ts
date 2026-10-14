@@ -561,6 +561,7 @@ export class ApiClient {
     if (opts.limit != null) params.set("limit", String(opts.limit));
     if (opts.cursor) params.set("cursor", opts.cursor);
     if (opts.sort) params.set("sort", opts.sort);
+    if (opts.filter) params.set(`filter[${opts.filter.type}]`, opts.filter.value);
     const qs = params.toString();
     const path = `/libraries/${encodeURIComponent(libraryId)}/titles${
       qs ? `?${qs}` : ""
@@ -594,6 +595,7 @@ export class ApiClient {
     const params = new URLSearchParams();
     if (opts.limit != null) params.set("limit", String(opts.limit));
     if (opts.cursor) params.set("cursor", opts.cursor);
+    if (opts.filter) params.set(`filter[${opts.filter.type}]`, opts.filter.value);
     const qs = params.toString();
     const path = `/libraries/${encodeURIComponent(libraryId)}/titles${
       qs ? `?${qs}` : ""

@@ -297,7 +297,7 @@ test.describe("home: empty-state rendering matches the API", () => {
   // a freshly-logged-in browser session with no in-progress titles yields an
   // empty Continue Watching unless this run seeded one). The pure both-rows-empty
   // path is also covered deterministically by the component tests.
-  test("each Home row shows cards or its empty state, matching GET /home", async ({
+  test("Home shows its rows, or the Home-level empty state, matching GET /home", async ({
     page,
   }) => {
     await uiLogin(page);
@@ -312,23 +312,42 @@ test.describe("home: empty-state rendering matches the API", () => {
       return (await res.json()) as {
         continueWatching: unknown[];
         recentlyAdded: unknown[];
+        rows?: unknown[];
       };
     });
 
     const cwEmpty = (home.continueWatching ?? []).length === 0;
     const raEmpty = (home.recentlyAdded ?? []).length === 0;
 
-    if (cwEmpty) {
-      await expect(page.getByTestId("home-continue-watching-empty")).toBeVisible();
+    if (home.rows) {
+      // With `rows` (features.homeRows) the server omits an empty row, so an empty
+      // one is simply absent; when no row has items at all, Home shows ONE
+      // Home-level empty state instead. The legacy per-row empty states never show.
+      const anyItems = (home.rows as { items?: unknown[] }[]).some(
+        (r) => (r.items ?? []).length > 0,
+      );
+      await expect(page.getByTestId("home-empty")).toHaveCount(anyItems ? 0 : 1);
+      await expect(page.getByTestId("home-continue-watching-empty")).toHaveCount(0);
+      await expect(page.getByTestId("home-recently-added-empty")).toHaveCount(0);
+      if (cwEmpty) await expect(page.getByTestId("home-continue-watching")).toHaveCount(0);
+      if (raEmpty) await expect(page.getByTestId("home-recently-added")).toHaveCount(0);
     } else {
+      // A server without `rows` keeps the fixed layout and its per-row empty states.
+      if (cwEmpty) {
+        await expect(page.getByTestId("home-continue-watching-empty")).toHaveCount(1);
+      }
+      if (raEmpty) {
+        await expect(page.getByTestId("home-recently-added-empty")).toHaveCount(1);
+      }
+      await expect(page.getByTestId("home-empty")).toHaveCount(0);
+    }
+
+    if (!cwEmpty) {
       await expect(
         page.getByTestId("home-continue-watching").getByTestId("poster-tile").first(),
       ).toBeVisible();
     }
-
-    if (raEmpty) {
-      await expect(page.getByTestId("home-recently-added-empty")).toBeVisible();
-    } else {
+    if (!raEmpty) {
       await expect(
         page.getByTestId("home-recently-added").getByTestId("poster-tile").first(),
       ).toBeVisible();

@@ -186,7 +186,7 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
   "supportedVersions": [1],
   "features": {
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
-    "watchState": true, "home": true, "search": true, "collections": true,
+    "watchState": true, "home": true, "homeRows": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
     "mediaCookieRefresh": true, "streamToken": true, "transcode": true,
     "tailscale": false,
@@ -546,8 +546,8 @@ Errors: `400 BAD_REQUEST` `"invalid cursor"` (garbled), `410 RESYNC` (a `since` 
 
 One route, three shapes by Library kind:
 
-- **movie** → `{ "titles": [ titleSummaryJSON ], "nextCursor"? }`. Query: `limit` (default 20, max 100), `cursor`, `sort` (`title` default; `dateAdded`/`addedAt`/`-addedAt`/`recent` = newest-first), `filter[genre]` (exact string).
-- **tv** → `{ "shows": [ showSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]` (no `sort`).
+- **movie** → `{ "titles": [ titleSummaryJSON ], "nextCursor"? }`. Query: `limit` (default 20, max 100), `cursor`, `sort` (`title` default; `dateAdded`/`addedAt`/`-addedAt`/`recent` = newest-first), `filter[genre]` (exact string), `filter[studio]` (exact; any of the Title's Studios), `filter[decade]` (`1980` = 1980–1989), `filter[person]` (provider person ref, matched only within the Title's top five billed cast). `filter[network]` on a Movie Library matches nothing (empty page, not an error). Filters combine with AND; a `filter[decade]` that is not a positive multiple of 10 → 400 `bad_request`.
+- **tv** → `{ "shows": [ showSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]`, `filter[network]` (exact; any of the Show's Networks), `filter[decade]` (first-air year), `filter[person]` (top five billed of the Show's own cast, never Episode guests) (no `sort`). `filter[studio]` on a TV Library matches nothing (empty page, not an error).
 - **music** → `{ "artists": [ artistSummaryJSON ], "nextCursor"? }`. Query: `limit`, `cursor`, `filter[genre]`.
 
 Errors: `400 BAD_REQUEST` `"invalid cursor"`, `404` (unknown/ungranted library).
@@ -619,10 +619,28 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 #### GET /home
 
 ```json
-{ "continueWatching": [ homeTitleJSON ], "upNext": [ homeTitleJSON ], "recentlyAdded": [ homeTitleJSON ] }
+{ "continueWatching": [ homeTitleJSON ], "upNext": [ homeTitleJSON ], "recentlyAdded": [ homeTitleJSON ],
+  "rows": [ homeRowJSON ] }
 ```
 
 `homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"?, "linked"?, "available"?, "linkedServer"? }`. `linked`/`available`/`linkedServer` mean exactly what they mean on `libraryJSON` (§3.3) and `titleSummaryJSON` (§3.4), and are absent on a local Title — a Home row is where a viewer meets a mirrored Title with no Library screen around it, so the row itself both marks it and (via `linkedServer`, present only on a linked row) names the sharing server. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
+
+**`rows`** (advertised by `features.homeRows`) is the same Home surface as one ordered list, with **My List** and the **Discovery rows** interleaved. The three legacy fields above are unchanged and still sent; a client that renders `rows` ignores them, and a client that predates `homeRows` is unaffected. `rows` is always present (possibly `[]`).
+
+```json
+{ "kind": "continueWatching|upNext|myList|recentlyAdded|discovery",
+  "title": "Comedy Movies",
+  "mediaKind"?: "movie|tv",
+  "items": [ … ],
+  "source"?: { "type": "genre|studio|network|decade|person", "value": "Comedy", "displayValue"?: "Tom Hanks", "libraryIds": ["…"] },
+  "total"?: 12 }
+```
+
+- **Order** is fixed: Continue Watching, Up Next, Discovery[0], My List, Discovery[1], Recently Added, Discovery[2…]. An empty row is omitted and the next row moves up; the pattern never reorders (so with no Watchlist, Recently Added follows the second Discovery row).
+- **`items`** by `kind`: `continueWatching` / `upNext` / `recentlyAdded` → `homeTitleJSON`, with the same values as the legacy arrays; `myList` → `homeTitleJSON` too (an Episode carries its `episode` parent context; there is no `itemId` — manage the list through `GET /watchlist`), in Watchlist order, filtered by the caller's Library access and Rating ceiling, capped at 20 (the full list is `GET /watchlist`); `discovery` with `mediaKind: "movie"` → `titleSummaryJSON`; with `mediaKind: "tv"` → `showSummaryJSON`. `linked`/`available`/`linkedServer` decorate exactly as elsewhere. My List lists each Title once, at its first Watchlist position, even if the Watchlist holds it more than once.
+- **`title`** is a plain English label the server computes: "Continue Watching", "Up Next", "My List", "Recently Added", and for Discovery "Comedy Movies" / "Drama Shows" (genre), "From A24" (studio), "On HBO" (network), "80s Movies" / "2010s Shows" (decade: the two-digit form only for 1920–1990, the full year otherwise — "1910s Movies", "2000s Movies"), "Starring Tom Hanks" (person). A client may localize instead, from `kind` plus `source` (and `mediaKind`).
+- **`source`** and **`total`** appear on `discovery` rows only. `source.type` is the Library-browse filter parameter name — `genre`, `studio`, `network`, `decade`, or `person` (an actor row) — so "See all" is `GET /libraries/{id}/titles?filter[{type}]={value}` for each id in `libraryIds` (the Libraries holding the row's Titles). `value` is the filter value and must be URL-escaped when put in the query (e.g. `Sci-Fi & Fantasy` → `Sci-Fi%20%26%20Fantasy`) (a decade is its first year, `"1980"`; a person is the provider ref); `displayValue` is how to show it and is sent only when it differs from `value` (a person's name). `total` is how many visible Titles matched before the 20-Title cap on `items`.
+- **Discovery rows** are chosen per User per **Server-local day**: the same User gets the same rows in the same order all day and a different choice the next; nothing is stored. At most 8 rows, never two adjacent rows of one source, and a value needs 8 visible Titles to qualify.
 
 #### GET /search?q=…
 

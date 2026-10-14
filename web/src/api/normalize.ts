@@ -59,6 +59,8 @@ import type {
   EpisodeSummary,
   EpisodeSummaryRaw,
   HomeResponseRaw,
+  HomeRow,
+  HomeRowRaw,
   HomeRows,
   Library,
   LinkedMarks,
@@ -251,6 +253,21 @@ export function normalizeHome(raw: HomeResponseRaw): HomeRows {
     continueWatching: (raw?.continueWatching ?? []).map(normalizeTitleSummary),
     upNext: (raw?.upNext ?? []).map(normalizeTitleSummary),
     recentlyAdded: (raw?.recentlyAdded ?? []).map(normalizeTitleSummary),
+    rows: raw?.rows?.map(normalizeHomeRow),
+  };
+}
+
+function normalizeHomeRow(raw: HomeRowRaw): HomeRow {
+  const items = raw.items ?? [];
+  const isShows = raw.kind === "discovery" && raw.mediaKind === "tv";
+  return {
+    kind: raw.kind,
+    title: raw.title,
+    mediaKind: raw.mediaKind,
+    titles: isShows ? [] : items.map((i) => normalizeTitleSummary(i as TitleSummaryRaw)),
+    shows: isShows ? items.map((i) => normalizeShowSummary(i as ShowSummaryRaw)) : [],
+    source: raw.source,
+    total: raw.total,
   };
 }
 

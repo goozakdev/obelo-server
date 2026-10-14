@@ -220,6 +220,7 @@ func TestARecordSurvivesTheRoundTrip(t *testing.T) {
 		ReleaseDate:    "2021-10-22",
 		RuntimeMinutes: 155,
 		Studio:         "Legendary",
+		Studios:        []string{"Legendary", "Warner Bros."},
 		Genres:         []string{"Science Fiction"},
 		Cast:           []Credit{{Person: "Timothée Chalamet", Role: "Actor", Character: "Paul", Kind: "cast", PersonRef: "tmdb:1", ImageURL: "https://i/1.jpg"}},
 		Artwork:        []ArtworkRef{{Role: "poster", URL: "https://i/p.jpg"}},

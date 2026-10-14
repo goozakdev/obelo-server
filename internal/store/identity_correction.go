@@ -38,7 +38,7 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 		// from the old one's record (ADR-0045). The caller's ApplyOverride re-pins the
 		// picked record immediately after.
 		`UPDATE titles SET
-		     title = ?, year = ?, sort_title = ?, identity_key = ?,
+		     title = ?, year = ?, year_from_metadata = 0, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = '', enriched_title = '',
 		     enrichment_id_namespace = '', enrichment_id_origin = '',
 		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`,
@@ -74,7 +74,7 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 func (db *DB) RekeyShowIdentity(showID, title string, year int, tmdbID, identityKey string) error {
 	res, err := db.Exec(
 		`UPDATE shows SET
-		     title = ?, year = ?, sort_title = ?, identity_key = ?,
+		     title = ?, year = ?, year_from_metadata = 0, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = ''
 		   WHERE id = ?`,
 		title, nullableYear(year), SortTitle(title), identityKey, tmdbID, showID,

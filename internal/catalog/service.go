@@ -28,7 +28,12 @@ var (
 type Store interface {
 	LibraryExists(id string) (bool, error)
 	LibraryByID(id string) (store.Library, error)
-	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, genre string, filter store.AccessFilter) (store.TitlePage, error)
+	// DiscoveryCatalog is the Movie/Show facts the Discovery row engine groups by.
+	DiscoveryCatalog(userID string, filter store.AccessFilter) ([]store.DiscoveryItem, error)
+	// TitlesByIDs / ShowsByIDs bulk-read the entities of a Discovery row's items.
+	TitlesByIDs(ids []string) (map[string]store.Title, error)
+	ShowsByIDs(ids []string) (map[string]store.Show, error)
+	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.TitlePage, error)
 	TitleByID(id string) (store.TitleDetail, error)
 	// FileByID loads one File (with Streams) by its stable id, or ErrNotFound —
 	// the lookup behind the sessionless direct-file download route. It carries no
@@ -135,7 +140,7 @@ type Store interface {
 	// TV browse (issue tv-music/01): the explicit Show → Season → Episode
 	// hierarchy. ListShows is the top-level grid for a TV Library; the rest drill
 	// down. EpisodeContextForTitle attaches parent context to an Episode detail.
-	ListShows(libraryID string, cursor *store.TitleCursor, limit int, genre string, filter store.AccessFilter) (store.ShowPage, error)
+	ListShows(libraryID string, cursor *store.TitleCursor, limit int, f store.BrowseFilter, filter store.AccessFilter) (store.ShowPage, error)
 	ShowByID(id string) (store.Show, error)
 	SeasonsForShow(showID string) ([]store.Season, error)
 	SeasonByID(id string) (store.Season, error)
@@ -263,6 +268,17 @@ type ListInput struct {
 	// Genre, when non-empty, filters the listing to Titles carrying that enriched
 	// genre (the filter[genre] browse param). An un-enriched Title has no genres.
 	Genre string
+	// Studio (Movie libraries), Network (TV libraries), Decade (first year of the
+	// decade, 0 = none) and Person (provider person ref, top-five billed cast) are
+	// the other browse filters. All combine with AND. Studio on a TV library or
+	// Network on a Movie library matches nothing.
+	Studio, Network, Person string
+	Decade                  int
+}
+
+// browseFilter is the store-level form of the listing filters.
+func (in ListInput) browseFilter() store.BrowseFilter {
+	return store.BrowseFilter{Genre: in.Genre, Studio: in.Studio, Network: in.Network, Decade: in.Decade, Person: in.Person}
 }
 
 // Page is one page of Title summaries plus the opaque cursor for the next page
@@ -332,7 +348,7 @@ func (s *Service) ListTitles(scope access.Scope, in ListInput) (Page, error) {
 		return Page{}, err
 	}
 
-	page, err := s.store.ListTitles(in.LibraryID, sortKind, cursor, limit, in.Genre, scope.StoreFilter())
+	page, err := s.store.ListTitles(in.LibraryID, sortKind, cursor, limit, in.browseFilter(), scope.StoreFilter())
 	if err != nil {
 		return Page{}, err
 	}
@@ -960,10 +976,25 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 		recentlyAdded.Titles = append(recentlyAdded.Titles, ht)
 	}
 
-	// Decorate every Home leaf with its enrichment (overview/genres/display title)
-	// in two bulk reads — the Home queries use the lean Title projection, so this
-	// is how enrichment reaches the Home surface (issue 03).
-	rows := []*HomeRow{&continueWatching, &upNext, &recentlyAdded}
+	s.decorateHomeRows([]*HomeRow{&continueWatching, &upNext, &recentlyAdded})
+	return continueWatching, upNext, recentlyAdded, nil
+}
+
+// HomeTitles shapes the Titles as Home leaves in the given order, decorated exactly
+// as the Home rows are: parent context for Episodes and Tracks, plus enrichment.
+func (s *Service) HomeTitles(titles []store.Title) []HomeTitle {
+	row := HomeRow{Titles: make([]HomeTitle, 0, len(titles))}
+	for _, t := range titles {
+		row.Titles = append(row.Titles, HomeTitle{Title: t})
+	}
+	s.decorateHomeRows([]*HomeRow{&row})
+	return row.Titles
+}
+
+// decorateHomeRows attaches parent context and enrichment (overview/genres/display
+// title) to every leaf in two bulk reads each — the Home queries use the lean Title
+// projection, so this is how enrichment reaches the Home surface (issue 03).
+func (s *Service) decorateHomeRows(rows []*HomeRow) {
 	s.attachHomeContexts(rows)
 	var ids []string
 	for _, row := range rows {
@@ -983,7 +1014,6 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 			row.Titles[i].Genres = genres[row.Titles[i].ID]
 		}
 	}
-	return continueWatching, upNext, recentlyAdded, nil
 }
 
 // homeContextReader is the optional bulk read behind attachHomeContexts. *store.DB
@@ -1105,7 +1135,7 @@ func (s *Service) ListShows(scope access.Scope, in ListInput) (ShowsPage, error)
 	if err != nil {
 		return ShowsPage{}, err
 	}
-	page, err := s.store.ListShows(in.LibraryID, cursor, limit, in.Genre, scope.StoreFilter())
+	page, err := s.store.ListShows(in.LibraryID, cursor, limit, in.browseFilter(), scope.StoreFilter())
 	if err != nil {
 		return ShowsPage{}, err
 	}

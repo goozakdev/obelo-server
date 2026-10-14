@@ -3,6 +3,7 @@ package tmdb
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ func tvStub(t *testing.T) (*Provider, *sdktest.Host) {
 				_, _ = w.Write([]byte(`{
 				  "id": 1399, "overview": "Noble families vie for the throne.",
 				  "genres": [{"name":"Drama"},{"name":"Fantasy"}],
-				  "networks": [{"name":"HBO"}],
+				  "networks": [{"name":"HBO"},{"name":"Max"}],
 				  "poster_path": "/poster.jpg", "backdrop_path": "/bg.jpg",
 				  "content_ratings": {"results": [
 				     {"iso_3166_1":"GB","rating":"15"},
@@ -52,6 +53,9 @@ func TestTMDBShowSeasonEpisode(t *testing.T) {
 	show := lookup(t, p, pluginapi.MediaRef{Kind: "show", Title: "Game of Thrones", Year: 2011}).Record
 	if !show.Matched || show.Overview == "" || show.ContentRating != "TV-MA" || show.Studio != "HBO" {
 		t.Errorf("show metadata wrong: %+v", show)
+	}
+	if want := []string{"HBO", "Max"}; !reflect.DeepEqual(show.Studios, want) {
+		t.Errorf("show networks = %v, want both in TMDB order %v", show.Studios, want)
 	}
 	if len(show.Genres) != 2 || show.ExternalID != "1399" {
 		t.Errorf("show genres/id wrong: %+v", show)

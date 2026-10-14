@@ -1,7 +1,7 @@
 import { memo, useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { ShowSummary } from "../api/types";
+import type { BrowseFilter, ShowSummary } from "../api/types";
 import { usePaginatedList } from "./usePaginatedList";
 import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
 import { useLetterJump } from "./useLetterJump";
@@ -23,16 +23,31 @@ import LinkedMark, { linkedRowClass } from "./LinkedMark";
 export default function ShowGrid({
   libraryId,
   libraryName,
+  filter,
+  filterChip,
 }: {
   libraryId: string;
   libraryName: string;
+  /** An applied browse filter (from the URL), and the chip that shows/clears it. */
+  filter?: BrowseFilter;
+  filterChip?: ReactNode;
 }) {
+  const filterType = filter?.type;
+  const filterValue = filter?.value;
   const fetchPage = useCallback(
     async (cursor: string | null, signal: AbortSignal) => {
-      const page = await apiClient.listShows(libraryId, { cursor }, signal);
+      const page = await apiClient.listShows(
+        libraryId,
+        {
+          cursor,
+          filter:
+            filterType && filterValue ? { type: filterType, value: filterValue } : undefined,
+        },
+        signal,
+      );
       return { items: page.shows, nextCursor: page.nextCursor };
     },
-    [libraryId],
+    [libraryId, filterType, filterValue],
   );
   const [mode, setMode] = useLayoutMode(libraryId);
   const grid = usePaginatedList(fetchPage, getShowId);
@@ -55,6 +70,7 @@ export default function ShowGrid({
         <h2 className="section-title" data-testid="library-title">
           {libraryName}
         </h2>
+        {filterChip}
         <LetterJumpBar onJump={jumpTo} />
         <div className="grid-controls">
           <LayoutToggle mode={mode} onChange={setMode} />
@@ -174,7 +190,7 @@ function showMeta(s: ShowSummary): ReactNode {
 // Show has no artwork — Show artwork is a later slice). The poster-tile / -title
 // / -img / -placeholder testids match PosterTile so the browse specs select it
 // the same way.
-const ShowTile = memo(function ShowTile({ show }: { show: ShowSummary }) {
+export const ShowTile = memo(function ShowTile({ show }: { show: ShowSummary }) {
   return (
     <li
       className={linkedRowClass("poster-tile", show)}

@@ -415,12 +415,16 @@ func handleListShows(deps Deps, libraryID string) http.HandlerFunc {
 			return
 		}
 		q := r.URL.Query()
-		page, err := svc.ListShows(scope, catalog.ListInput{
+		in := catalog.ListInput{
 			LibraryID: libraryID,
 			Cursor:    q.Get("cursor"),
 			Limit:     parseLimit(q.Get("limit")),
 			Genre:     q.Get("filter[genre]"),
-		})
+		}
+		if !applyBrowseFilters(w, q, &in) {
+			return
+		}
+		page, err := svc.ListShows(scope, in)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
