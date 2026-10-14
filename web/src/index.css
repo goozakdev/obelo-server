@@ -2749,15 +2749,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   justify-content: space-between;
   gap: 1rem;
 }
-/* A row that carries the Seek previews panel wraps it onto a line of its own,
-   * full width; the identity takes the rest of the first line (basis 0) so it
-   * shrinks as it always did instead of pushing the cluster down. */
-.admin-library-row-wrap {
-  flex-wrap: wrap;
-}
-.admin-library-row-wrap > .admin-library-identity {
-  flex: 1 1 0;
-}
 .admin-seek-previews {
   flex: 0 0 100%;
   min-width: 0;

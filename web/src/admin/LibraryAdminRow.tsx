@@ -6,7 +6,6 @@ import { LibraryKindIcon } from "../browse/kindIcons";
 import { isLinked } from "../browse/LinkedMark";
 import { useScanStatus } from "./useScanStatus";
 import ConfirmDialog from "./ConfirmDialog";
-import SeekPreviewsPanel from "./SeekPreviewsPanel";
 import { useDismiss } from "../lib/useDismiss";
 
 // One Library row in the redesigned admin hub: its kind icon + name on the left,
@@ -45,9 +44,6 @@ import { useDismiss } from "../lib/useDismiss";
 // read when the menu first opens and flipped in place. Only a local TV Library
 // has one — for music, movies and a mirror the item is absent, not merely off.
 //
-// A Movie or TV Library also carries its Seek preview controls (ADR-0070) in a
-// panel under the row (SeekPreviewsPanel); a music Library and a mirror have none.
-//
 // This row is only ever a LOCAL Library: the hub filters mirrors out of the list
 // entirely (issue 16), so there is no linked branch here and no disabled cluster.
 // A linked Library (ADR-0056 §1) refuses every writer below with 409
@@ -84,7 +80,6 @@ export default function LibraryAdminRow({
   const [savingDetection, setSavingDetection] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const hasDetection = library.kind === "tv" && !isLinked(library);
-  const hasSeekPreviews = (library.kind === "movie" || library.kind === "tv") && !isLinked(library);
 
   const status = scan.status;
   const state = status?.state ?? "idle";
@@ -195,7 +190,7 @@ export default function LibraryAdminRow({
 
   return (
     <li
-      className={`admin-library-row admin-panel-row${hasSeekPreviews ? " admin-library-row-wrap" : ""}`}
+      className="admin-library-row admin-panel-row"
       data-testid="admin-library-row"
       data-library-id={library.id}
     >
@@ -382,8 +377,6 @@ export default function LibraryAdminRow({
           {actionError ?? refreshError ?? scan.error}
         </p>
       )}
-
-      {hasSeekPreviews && <SeekPreviewsPanel library={library} />}
 
       {confirmingRefreshAll && (
         <ConfirmDialog

@@ -5,7 +5,8 @@ import { errorMessage } from "../screens/errorMessage";
 import type { Library, SeekPreviewStatus } from "../api/types";
 import ConfirmDialog from "./ConfirmDialog";
 
-// A Movie or TV Library's Seek preview controls (ADR-0070), shown under its row:
+// A Movie or TV Library's Seek preview controls (ADR-0070), shown in the Seek Previews
+// tab of the Edit-Library dialog:
 // the generation toggle, a coverage line ("7 of 10 Files have seek previews ·
 // 2 failed"), a collapsible list of the Files whose generation failed — each with
 // Retry, plus Retry all — and a Delete that removes every set of the Library and
@@ -40,7 +41,7 @@ export default function SeekPreviewsPanel({ library }: { library: Library }) {
     try {
       setStatus(await apiClient.getSeekPreviews(library.id));
     } catch (err) {
-      // A Library that lost its toggle mid-session is simply gone from the row.
+      // A Library that lost its toggle mid-session is simply gone from the tab.
       if (err instanceof ApiError && err.status === 404) setStatus(null);
       else setError(errorMessage(err));
     }
@@ -100,7 +101,7 @@ export default function SeekPreviewsPanel({ library }: { library: Library }) {
             )
           }
         />{" "}
-        Seek previews{status.available ? "" : ": Unavailable"}
+        Enable Seek Previews{status.available ? "" : ": Unavailable"}
       </label>
       <span
         className="admin-seek-previews-coverage"
