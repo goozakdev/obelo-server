@@ -26,8 +26,12 @@ _Avoid_: Song (use Track).
 ## Organization
 
 **Collection**:
-An Admin-curated, unordered grouping of Titles for browsing/discovery (e.g. "A24 Films"), shared across Users subject to their library access and rating ceiling. Manual membership in v1.
+An Admin-curated, unordered grouping of Titles for browsing/discovery (e.g. "A24 Films"), shared across Users subject to their library access and rating ceiling. Its membership is either manual (hand-picked) or a rule (see Smart Collection).
 _Avoid_: Playlist (that's ordered + personal), Group, Tag.
+
+**Smart Collection**:
+A Collection whose membership is a rule over Titles' metadata rather than a hand-picked list, so it changes as the catalog changes. Admin-owned and shared exactly like a manual Collection. A personal, rule-driven list owned by a User is not one.
+_Avoid_: Smart list, Rule-based collection, Dynamic collection, Smart playlist.
 
 **Playlist**:
 A User-owned, ordered list of Titles of a single media kind, for sequential playback. Manual in v1. A Playlist can be loaded *into* the Queue (the ephemeral, in-session playback list) — but the two are distinct: a Playlist is the saved, owned, persisted list a Queue can be built from.
@@ -249,8 +253,24 @@ Core server constant: crossing ~90% played marks a Title watched (removing it fr
 _Avoid_: Completed.
 
 **Continue Watching / Up Next / Recently Added**:
-Per-User computed views (not stored entities), filtered by the User's library access and rating ceiling. Continue Watching = Titles between the 2% floor and 90% ceiling; Up Next = a Show's **resume point**; Recently Added = Titles with Files added recently.
-_Avoid_: On Deck (Plex's term), Home row.
+Per-User computed views (not stored entities), filtered by the User's library access and rating ceiling. Continue Watching = Titles between the 2% floor and 90% ceiling; Up Next = a Show's **resume point**; Recently Added = Titles with Files added recently. Each is a Home row.
+_Avoid_: On Deck (Plex's term).
+
+**Home row**:
+One named, ordered list of Titles on a User's Home, filtered by that User's library access and rating ceiling. Continue Watching, Up Next, Recently Added, My List and every Discovery row are Home rows. Home's order is fixed: Continue Watching, Up Next, a Discovery row, My List, a Discovery row, Recently Added, then the remaining Discovery rows; only which Discovery rows fill those places changes day to day. An empty Home row is not shown.
+_Avoid_: Shelf, Hub (Plex's term), Online row (that's on an Online source's page, never Home).
+
+**My List**:
+The Home row showing a User's Watchlist.
+_Avoid_: Watchlist row.
+
+**Discovery row**:
+A Home row the Server synthesizes from catalog metadata — one Row source value, one media kind (e.g. "Comedy Movies", "From A24", "80s Shows", "Starring Tom Hanks"). Not stored and not a Collection. Chosen per User per day (the Server's local day), so Home holds still through the day and changes overnight; only values with enough Titles visible to that User qualify, a Home shows a bounded number of them, and two from the same Row source are never adjacent. A TV Discovery row lists Shows, never Episodes. Within it, Titles the User has not watched come first, then watched ones, each group in that day's order. Music has none.
+_Avoid_: Genre row (genre is one Row source), Smart Collection (that's stored and Admin-owned), Recommendation.
+
+**Row source**:
+The metadata dimension a Discovery row is drawn from: Genre, Studio (Movies), Network (Shows), Decade, or Actor. A Title can carry several Studios or Networks and belongs to each one's row. An Actor counts only where they are among a Title's top five billed cast (a Show's own cast, never an Episode's guests).
+_Avoid_: Row type, Category.
 
 **Up Next (resume point)**:
 A started Show's next-to-watch Episode, anchored on the Show's most-recently-**played** Episode (see Watch state — a manual mark-watched does not move the anchor): it is that Episode if still in progress, otherwise the next unwatched Episode *after* it in Show order, wrapping to the first unwatched from the start once the end is reached ([ADR-0028](./docs/adr/0028-up-next-anchors-on-most-recently-played.md)). A fully-watched Show has no resume point and drops out. Deliberately **not** the lowest-numbered unwatched Episode: a viewer who skips an Episode or Season is resumed forward from where they last played, not nagged back into the gap (the skipped Episode resurfaces once, at the wrap). The same computation drives both Home's Up Next row (which shows only Shows whose anchor is already watched — an in-progress anchor belongs to Continue Watching, keeping the two rows disjoint) and the Show detail page's next-episode block.
@@ -461,7 +481,7 @@ _Avoid_: Content provider, Channel plugin.
 
 **Online row**:
 One named, ordered list of Online items on an Online source's page, chosen by the Plugin ("Trending", one channel's uploads). ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
-_Avoid_: Home row (those are the catalog's computed views), Shelf, Feed.
+_Avoid_: Home row (those are the catalog's, on Home), Shelf, Feed.
 
 **Online item**:
 One playable thing in an Online source — a single video. Never a Title: it has no identity on this Server, and asking for it again is asking the source again. ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
