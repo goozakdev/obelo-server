@@ -616,11 +616,19 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 		// files, so the Title is no longer hidden. The subtree is rebuilt by caller.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
 		// dismissed (reviewed = 1), where it stays cleared so the dismissal survives
-		// rescans. reviewed itself is never written by the scanner.
+		// rescans. reviewed itself is never written by the scanner. A yearless folder
+		// keeps a year enrichment filled in (year_from_metadata) with needs_review
+		// clear; a year the folder carries always wins and resets the flag.
 		if _, err := tx.Exec(
-			`UPDATE titles SET title = ?, year = ?, sort_title = ?,
+			`UPDATE titles SET title = ?,
+			    year = CASE WHEN ? IS NOT NULL THEN ?
+			                WHEN year_from_metadata = 1 THEN year END,
+			    year_from_metadata = CASE WHEN ? IS NOT NULL THEN 0 ELSE year_from_metadata END,
+			    sort_title = ?,
 			    tmdb_id = ?, imdb_id = ?,
-			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
+			    needs_review = CASE WHEN reviewed = 1 THEN 0
+			                        WHEN ? IS NULL AND year_from_metadata = 1 THEN 0
+			                        ELSE ? END,
 			    ambiguous = ?, hidden = 0,
 			    season_id = ?, season_number = ?, episode_number = ?, episode_label = ?,
 			    album_id = ?, disc_number = ?, track_number = ?,
@@ -631,9 +639,11 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    -- lives in title_external_ids and is untouched here (ADR-0045/0049).
 			    musicbrainz_recording_id = ?
 			  WHERE id = ?`,
-			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
+			tree.Title.Title,
+			nullableYear(tree.Year), nullableYear(tree.Year), nullableYear(tree.Year),
+			tree.SortTitle,
 			tree.TMDBID, tree.IMDBID,
-			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
+			nullableYear(tree.Year), boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
 			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 			titleID,

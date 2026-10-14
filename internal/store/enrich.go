@@ -981,10 +981,13 @@ func (db *DB) LockedFieldsSorted(titleID string) ([]string, error) {
 // store writes only the UNLOCKED fields; Genres/Cast/Artwork are rebuilt
 // wholesale (idempotent) unless their group is locked.
 type TitleEnrichment struct {
-	Overview       string
-	Tagline        string
-	ContentRating  string
-	ReleaseDate    string
+	Overview      string
+	Tagline       string
+	ContentRating string
+	ReleaseDate   string
+	// Year is the provider's release year (0 when unknown). Only a Movie takes it,
+	// and only as a fill: see WriteTitleEnrichment.
+	Year           int
 	RuntimeMinutes int
 	Studio         string
 	// Studios is every Studio, in order. Empty means [Studio]. Locked as a whole
@@ -1096,6 +1099,18 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 		titleID,
 	); err != nil {
 		return fmt.Errorf("store: updating enriched title: %w", err)
+	}
+	// A Movie whose folder name has no year takes the provider's (a year the folder
+	// carries, or an Admin set, is never replaced), and is then no longer a partial
+	// parse. needs_review is cleared for no other reason.
+	if e.Year > 0 {
+		if _, err := tx.Exec(
+			`UPDATE titles SET year = ?, year_from_metadata = 1, needs_review = 0
+			   WHERE id = ? AND kind = 'movie' AND (year IS NULL OR year_from_metadata = 1)`,
+			e.Year, titleID,
+		); err != nil {
+			return fmt.Errorf("store: filling title year: %w", err)
+		}
 	}
 	writeIDs := fillRecordIDsTx
 	if e.ReplaceRecord {

@@ -121,8 +121,11 @@ type EntityEnrichmentWrite struct {
 	// kind's default lead (`tmdb` for a Show/Season, `musicbrainz` for an
 	// Artist/Album).
 	Namespace string
-	Genres    []string
-	Artwork   []EntityArtworkRow
+	// Year is the provider's first-air year (0 when unknown). Only a Show takes it,
+	// and only as a fill: see WriteEntityEnrichment.
+	Year    int
+	Genres  []string
+	Artwork []EntityArtworkRow
 	// Cast is the parent's ordered cast (a Show's series main cast), rebuilt
 	// wholesale into entity_credits unless 'cast' is Locked — the parent analogue
 	// of a Title's title_credits (cast-photos/02). Empty for a parent kind that
@@ -198,6 +201,19 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 		time.Now().UTC().Format(time.RFC3339), e.Source,
 	); err != nil {
 		return fmt.Errorf("store: upserting entity enrichment: %w", err)
+	}
+
+	// A Show whose folder name has no year takes the provider's (a year the folder
+	// carries, or an Admin set, is never replaced), and is then no longer a partial
+	// parse. needs_review is cleared for no other reason.
+	if entityType == EntityShow && e.Year > 0 {
+		if _, err := tx.Exec(
+			`UPDATE shows SET year = ?, year_from_metadata = 1, needs_review = 0
+			   WHERE id = ? AND (year IS NULL OR year_from_metadata = 1)`,
+			e.Year, entityID,
+		); err != nil {
+			return fmt.Errorf("store: filling show year: %w", err)
+		}
 	}
 
 	if !locks["network"] {

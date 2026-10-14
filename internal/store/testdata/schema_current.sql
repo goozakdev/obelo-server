@@ -319,7 +319,7 @@ CREATE TABLE shows (
     -- updated_at is maintained by the touch triggers below, bumped whenever
     -- this row or a dependent (Season, Title, Enrichment, genres, credits)
     -- changes, so a linked Library's sync can ask "what changed since X".
-    updated_at   TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT '', year_from_metadata INTEGER NOT NULL DEFAULT 0,
     UNIQUE (library_id, identity_key)
 );
 CREATE INDEX idx_shows_library    ON shows(library_id);
@@ -518,7 +518,7 @@ CREATE TABLE titles (
     -- this row or a dependent (Edition, File, Stream, genres, credits,
     -- external ids) changes, so a linked Library's sync can ask "what
     -- changed since X".
-    updated_at               TEXT NOT NULL DEFAULT '',
+    updated_at               TEXT NOT NULL DEFAULT '', year_from_metadata INTEGER NOT NULL DEFAULT 0,
     UNIQUE (library_id, identity_key)
 );
 CREATE INDEX idx_titles_library      ON titles(library_id);

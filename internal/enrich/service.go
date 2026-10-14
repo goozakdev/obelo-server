@@ -1758,6 +1758,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		Tagline:        meta.Tagline,
 		ContentRating:  meta.ContentRating,
 		ReleaseDate:    meta.ReleaseDate,
+		Year:           metaYear(meta),
 		RuntimeMinutes: meta.RuntimeMinutes,
 		Studio:         meta.Studio,
 		Studios:        meta.Studios,
@@ -2678,6 +2679,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 		Overview:      meta.Overview,
 		ContentRating: meta.ContentRating,
 		Network:       meta.Studio, // Studio carries the show network / album label
+		Year:          meta.Year,
 		Networks:      meta.Studios,
 		Source:        meta.Source,
 		ExternalID:    rec.ID,
@@ -2916,4 +2918,18 @@ func EnsureCacheDir(dir string) error {
 		return fmt.Errorf("enrich: creating artwork cache %q: %w", dir, err)
 	}
 	return nil
+}
+
+// metaYear is the release year a lookup reports: the source's own Year, else the
+// leading four digits of its release date.
+func metaYear(meta TitleMetadata) int {
+	if meta.Year > 0 {
+		return meta.Year
+	}
+	if len(meta.ReleaseDate) >= 4 {
+		if y, err := strconv.Atoi(meta.ReleaseDate[:4]); err == nil && y > 0 {
+			return y
+		}
+	}
+	return 0
 }
