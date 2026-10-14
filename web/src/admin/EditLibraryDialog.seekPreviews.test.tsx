@@ -232,6 +232,7 @@ describe("EditLibraryDialog — seek previews tab", () => {
     expect(screen.queryByTestId("seek-previews-failed-list")).toBeNull();
     await user.click(screen.getByTestId("seek-previews-failed-toggle"));
     const list = screen.getByTestId("seek-previews-failed-list");
+    expect(within(list).getByText("2 failed Files")).toBeInTheDocument();
     expect(within(list).getByText("Dune (2021)")).toBeInTheDocument();
     expect(
       within(list).getAllByText("ffmpeg lacks zscale; cannot tone-map HDR"),

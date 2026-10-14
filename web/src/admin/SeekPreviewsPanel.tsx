@@ -139,25 +139,32 @@ export default function SeekPreviewsPanel({ library }: { library: Library }) {
           className="admin-seek-previews-failed"
           data-testid="seek-previews-failed-list"
         >
-          <button
-            type="button"
-            className="button-secondary"
-            data-testid="seek-previews-retry-all"
-            disabled={busy}
-            onClick={() =>
-              void run(() => apiClient.retrySeekPreviews(library.id, undefined))
-            }
-          >
-            Retry all
-          </button>
+          <div className="admin-seek-previews-failed-head">
+            <span>
+              {failed.length} failed {failed.length === 1 ? "File" : "Files"}
+            </span>
+            <button
+              type="button"
+              className="button-secondary"
+              data-testid="seek-previews-retry-all"
+              disabled={busy}
+              onClick={() =>
+                void run(() =>
+                  apiClient.retrySeekPreviews(library.id, undefined),
+                )
+              }
+            >
+              Retry all
+            </button>
+          </div>
           <ul className="admin-seek-previews-list">
             {failed.map((f) => (
               <li key={f.fileId} data-testid="seek-previews-failed-item">
-                <strong>{f.label}</strong>
-                {" — "}
-                <span className="admin-seek-previews-reason">{f.reason}</span>
-                <br />
-                <small className="admin-seek-previews-path">{f.path}</small>
+                <div className="admin-seek-previews-item-text">
+                  <strong>{f.label}</strong>
+                  <span className="admin-seek-previews-reason">{f.reason}</span>
+                  <small className="admin-seek-previews-path">{f.path}</small>
+                </div>
                 <button
                   type="button"
                   className="button-secondary"
