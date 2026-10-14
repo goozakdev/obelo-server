@@ -1,14 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithAuth } from "../test/renderWithAuth";
 import { ApiError } from "../api/errors";
 import type { Library, SeekPreviewStatus } from "../api/types";
 
-// The Seek preview controls (ADR-0070) on a Library row: a toggle, a coverage
+// The Seek preview controls (ADR-0070) in the Edit-Library dialog's Seek Previews tab: a toggle, a coverage
 // line, a collapsible failed list with Retry / Retry all, and a Delete that
 // confirms it also turns generation off (DECISIONS 24). Movie and TV Libraries
-// only; a music Library, a linked mirror, or a 404 shows nothing.
+// only; a music Library or a linked mirror has no tab, a 404 shows nothing, and the
+// Library row no longer renders the panel.
 
 const {
   getScanStatus,
@@ -39,20 +40,29 @@ vi.mock("../api/client", async () => {
   };
 });
 
+import EditLibraryDialog from "./EditLibraryDialog";
 import LibraryAdminRow from "./LibraryAdminRow";
 
 function lib(kind: string): Library {
   return { id: "lib1", name: "Films", kind, rootFolders: [] } as Library;
 }
 
+async function renderTab(library: Library) {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.open = true;
+  });
+  const view = renderWithAuth(
+    <EditLibraryDialog library={library} onChanged={() => {}} onClose={() => {}} />,
+    { user: { id: "u1", username: "operator", role: "admin" } },
+  );
+  await userEvent.setup().click(screen.getByTestId("edit-library-tab-seek-previews"));
+  return view;
+}
+
 function renderRow(library: Library) {
   return renderWithAuth(
     <ul>
-      <LibraryAdminRow
-        library={library}
-        onEdit={() => {}}
-        onDeleted={() => {}}
-      />
+      <LibraryAdminRow library={library} onEdit={() => {}} onDeleted={() => {}} />
     </ul>,
     { user: { id: "u1", username: "operator", role: "admin" } },
   );
@@ -90,10 +100,10 @@ beforeEach(() => {
   retrySeekPreviews.mockReset().mockResolvedValue(undefined);
 });
 
-describe("LibraryAdminRow — seek previews", () => {
+describe("EditLibraryDialog — seek previews tab", () => {
   it("shows the toggle and coverage line for a movie and a TV Library", async () => {
     for (const kind of ["movie", "tv"]) {
-      const { unmount } = renderRow(lib(kind));
+      const { unmount } = await renderTab(lib(kind));
       expect(
         await screen.findByTestId("seek-previews-coverage"),
       ).toHaveTextContent("7 of 10 Files have seek previews");
@@ -106,15 +116,47 @@ describe("LibraryAdminRow — seek previews", () => {
     }
   });
 
-  it("shows nothing on a music Library or a linked mirror, and does not ask the server", async () => {
-    const music = renderRow(lib("music"));
-    music.unmount();
-    renderRow({
-      ...lib("movie"),
-      linked: true,
-      available: true,
-      linkedServer: "Friend",
+  it("has no tab on a music Library or a linked mirror, and does not ask the server", async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.open = true;
     });
+    for (const library of [
+      lib("music"),
+      { ...lib("movie"), linked: true, available: true, linkedServer: "Friend" } as Library,
+    ]) {
+      const { unmount } = renderWithAuth(
+        <EditLibraryDialog library={library} onChanged={() => {}} onClose={() => {}} />,
+        { user: { id: "u1", username: "operator", role: "admin" } },
+      );
+      expect(screen.getByTestId("edit-library-tab-general")).toBeInTheDocument();
+      expect(screen.queryByTestId("edit-library-tab-seek-previews")).toBeNull();
+      unmount();
+    }
+    expect(getSeekPreviews).not.toHaveBeenCalled();
+  });
+
+  it("is lazy: the panel mounts only after the tab is clicked, labelled Enable Seek Previews", async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.open = true;
+    });
+    const user = userEvent.setup();
+    renderWithAuth(
+      <EditLibraryDialog library={lib("movie")} onChanged={() => {}} onClose={() => {}} />,
+      { user: { id: "u1", username: "operator", role: "admin" } },
+    );
+    expect(screen.getByTestId("edit-library-tab-seek-previews")).toHaveTextContent(
+      "Seek Previews",
+    );
+    expect(screen.queryByTestId("seek-previews")).toBeNull();
+    expect(getSeekPreviews).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("edit-library-tab-seek-previews"));
+    expect(await screen.findByTestId("seek-previews")).toHaveTextContent(
+      "Enable Seek Previews",
+    );
+  });
+
+  it("no longer renders the panel on the Library row", async () => {
+    renderRow(lib("movie"));
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId("seek-previews")).toBeNull();
     expect(getSeekPreviews).not.toHaveBeenCalled();
@@ -124,7 +166,7 @@ describe("LibraryAdminRow — seek previews", () => {
     getSeekPreviews.mockRejectedValue(
       new ApiError(404, "NOT_FOUND", "this library has no seek previews"),
     );
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     await waitFor(() => expect(getSeekPreviews).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId("seek-previews")).toBeNull();
@@ -132,7 +174,7 @@ describe("LibraryAdminRow — seek previews", () => {
 
   it("flips the toggle through the client and shows the saved state", async () => {
     const user = userEvent.setup();
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     const toggle = await screen.findByTestId("seek-previews-toggle");
     getSeekPreviews.mockResolvedValue(status({ enabled: false }));
     await user.click(toggle);
@@ -146,7 +188,7 @@ describe("LibraryAdminRow — seek previews", () => {
 
   it("shows generation as unavailable, not on, when the server cannot run it", async () => {
     getSeekPreviews.mockResolvedValue(status({ available: false }));
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     const toggle = await screen.findByTestId("seek-previews-toggle");
     expect(toggle).not.toBeChecked();
     expect(toggle).toBeDisabled();
@@ -156,7 +198,7 @@ describe("LibraryAdminRow — seek previews", () => {
   });
 
   it("says nothing about failures when none failed", async () => {
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     const line = await screen.findByTestId("seek-previews-coverage");
     expect(line.textContent).toBe("7 of 10 Files have seek previews");
     expect(screen.queryByTestId("seek-previews-failed-toggle")).toBeNull();
@@ -164,7 +206,7 @@ describe("LibraryAdminRow — seek previews", () => {
 
   it("does not delete when the confirm is cancelled", async () => {
     const user = userEvent.setup();
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     await user.click(await screen.findByTestId("seek-previews-delete"));
     await user.click(await screen.findByTestId("confirm-dialog-cancel"));
     expect(deleteSeekPreviews).not.toHaveBeenCalled();
@@ -183,13 +225,14 @@ describe("LibraryAdminRow — seek previews", () => {
       }),
     );
     const user = userEvent.setup();
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     expect(
       await screen.findByTestId("seek-previews-coverage"),
     ).toHaveTextContent("8 of 10 Files have seek previews · 2 failed");
     expect(screen.queryByTestId("seek-previews-failed-list")).toBeNull();
     await user.click(screen.getByTestId("seek-previews-failed-toggle"));
     const list = screen.getByTestId("seek-previews-failed-list");
+    expect(within(list).getByText("2 failed Files")).toBeInTheDocument();
     expect(within(list).getByText("Dune (2021)")).toBeInTheDocument();
     expect(
       within(list).getAllByText("ffmpeg lacks zscale; cannot tone-map HDR"),
@@ -203,7 +246,7 @@ describe("LibraryAdminRow — seek previews", () => {
   it("retries one File, or all, and refreshes the status after", async () => {
     getSeekPreviews.mockResolvedValue(status({ failed: [failure] }));
     const user = userEvent.setup();
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     await user.click(await screen.findByTestId("seek-previews-failed-toggle"));
     const before = getSeekPreviews.mock.calls.length;
     await user.click(screen.getByTestId("seek-previews-retry-f1"));
@@ -222,7 +265,7 @@ describe("LibraryAdminRow — seek previews", () => {
 
   it("confirms before deleting, says it turns generation off, then deletes", async () => {
     const user = userEvent.setup();
-    renderRow(lib("movie"));
+    await renderTab(lib("movie"));
     await user.click(await screen.findByTestId("seek-previews-delete"));
     expect(deleteSeekPreviews).not.toHaveBeenCalled();
     const message = await screen.findByTestId("confirm-dialog-message");
@@ -246,11 +289,30 @@ describe("LibraryAdminRow — seek previews", () => {
     );
     getSeekPreviews.mockResolvedValue(status({ failed: [failure] }));
     const user = userEvent.setup();
-    renderRow(lib("tv"));
+    await renderTab(lib("tv"));
     await user.click(await screen.findByTestId("seek-previews-failed-toggle"));
     await user.click(screen.getByTestId("seek-previews-retry-all"));
     expect(await screen.findByTestId("seek-previews-error")).toHaveTextContent(
       "no ffmpeg on this server",
     );
+  });
+
+  it("keeps the Edit dialog open when the nested delete confirm closes", async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.open = true;
+    });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderWithAuth(
+      <EditLibraryDialog library={lib("movie")} onChanged={() => {}} onClose={onClose} />,
+      { user: { id: "u1", username: "operator", role: "admin" } },
+    );
+    await user.click(screen.getByTestId("edit-library-tab-seek-previews"));
+    await user.click(await screen.findByTestId("seek-previews-delete"));
+    // React bubbles a native close (e.g. a browser close-watcher Esc) to ancestors.
+    fireEvent(screen.getByTestId("confirm-dialog"), new Event("close"));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent(screen.getByTestId("edit-library-dialog"), new Event("close"));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,7 +3,9 @@ import { ApiError, apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library } from "../api/types";
 import { LibraryKindIcon, libraryKindLabel } from "../browse/kindIcons";
+import { isLinked } from "../browse/LinkedMark";
 import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
+import SeekPreviewsPanel from "./SeekPreviewsPanel";
 
 // The Edit-Library dialog: a native modal <dialog> that lets an Admin correct a
 // Library in place — rename it or add root folders — with a Close button at the
@@ -11,13 +13,16 @@ import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
 // local view (and notify the hub to reload) without closing, so the Admin can make
 // several edits in one sitting; the roots list reflects each added folder
 // immediately. Deleting a Library is NOT here: it's the row's ⋮ menu action (with
-// its own confirmation modal), so this dialog carries no destructive control.
+// its own confirmation modal), so this dialog's only destructive control is the
+// Seek Previews tab's "Delete seek previews" (itself behind a confirmation).
 //
 // The dialog is TABBED (ADR-0027): a "General" tab carries the rename / add-folder
-// controls, and a "Metadata Providers" tab carries the per-Library Enrichment
-// policy (the EnrichmentPolicyPanel). The policy panel is mounted only when its tab
-// is active, so its policy is fetched when the Admin first opens the tab — not on
-// every Edit-dialog open. Both tabs share the one dialog chrome.
+// controls, a "Metadata Providers" tab carries the per-Library Enrichment policy
+// (the EnrichmentPolicyPanel), and a "Seek Previews" tab carries the Seek preview
+// controls (ADR-0070, the SeekPreviewsPanel) — only for a local Movie or TV
+// Library; a music Library and a linked mirror have none. A panel is mounted only
+// when its tab is active, so its data is fetched when the Admin first opens the
+// tab — not on every Edit-dialog open. All tabs share the one dialog chrome.
 //
 // The kind is fixed at creation (a Library holds exactly one media kind,
 // CONTEXT.md), so it's shown but not editable. A folder-overlap conflict on Add
@@ -26,7 +31,7 @@ import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
 
 const OVERLAP_CODE = "FOLDER_OVERLAP";
 
-type EditLibraryTab = "general" | "metadata-providers";
+type EditLibraryTab = "general" | "metadata-providers" | "seek-previews";
 
 export default function EditLibraryDialog({
   library,
@@ -97,9 +102,13 @@ export default function EditLibraryDialog({
     }
   }
 
+  const hasSeekPreviews = (lib.kind === "movie" || lib.kind === "tv") && !isLinked(lib);
   const tabs: { key: EditLibraryTab; label: string }[] = [
     { key: "general", label: "General" },
     { key: "metadata-providers", label: "Metadata Providers" },
+    ...(hasSeekPreviews
+      ? [{ key: "seek-previews" as const, label: "Seek Previews" }]
+      : []),
   ];
 
   return (
@@ -107,7 +116,10 @@ export default function EditLibraryDialog({
       ref={dialogRef}
       className="library-dialog"
       data-testid="edit-library-dialog"
-      onClose={onClose}
+      // React bubbles a nested ConfirmDialog's native close up to here; ignore it.
+      onClose={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       onClick={(e) => {
         if (e.target === dialogRef.current) onClose();
       }}
@@ -228,8 +240,10 @@ export default function EditLibraryDialog({
                 </p>
               )}
             </>
-          ) : (
+          ) : tab === "metadata-providers" ? (
             <EnrichmentPolicyPanel library={lib} />
+          ) : (
+            <SeekPreviewsPanel library={lib} />
           )}
         </div>
 

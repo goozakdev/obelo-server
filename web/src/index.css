@@ -2749,15 +2749,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   justify-content: space-between;
   gap: 1rem;
 }
-/* A row that carries the Seek previews panel wraps it onto a line of its own,
-   * full width; the identity takes the rest of the first line (basis 0) so it
-   * shrinks as it always did instead of pushing the cluster down. */
-.admin-library-row-wrap {
-  flex-wrap: wrap;
-}
-.admin-library-row-wrap > .admin-library-identity {
-  flex: 1 1 0;
-}
 .admin-seek-previews {
   flex: 0 0 100%;
   min-width: 0;
@@ -2774,19 +2765,37 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex: 0 0 100%;
   min-width: 0;
 }
+.admin-seek-previews-failed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--text-dim);
+}
 .admin-seek-previews-list {
   list-style: none;
   margin: 0.5rem 0 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  max-height: 20rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
 }
 .admin-seek-previews-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.6rem 0.75rem;
+}
+.admin-seek-previews-list li + li {
+  border-top: 1px solid var(--border);
+}
+.admin-seek-previews-item-text {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.75rem;
+  flex-direction: column;
+  gap: 0.15rem;
   min-width: 0;
 }
 .admin-seek-previews-reason {
@@ -2794,9 +2803,17 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   overflow-wrap: anywhere;
 }
 .admin-seek-previews-path {
-  flex: 1 1 100%;
   color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .admin-seek-previews-list li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-seek-previews-list li button {
+    justify-self: start;
+  }
 }
 .admin-library-identity {
   display: flex;

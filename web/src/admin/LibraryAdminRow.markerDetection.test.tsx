@@ -52,7 +52,7 @@ beforeEach(() => {
     titlesFound: 0,
     filesFound: 0,
   });
-  // A movie Library's Seek preview panel reads its own status; not under test here.
+  // Seek previews moved to the Edit dialog; the row no longer reads them.
   getSeekPreviews.mockReset().mockRejectedValue(new Error("not under test"));
   getMarkerDetection.mockReset().mockResolvedValue({ enabled: true, available: true });
   setMarkerDetection.mockReset().mockResolvedValue({ enabled: false, available: true });

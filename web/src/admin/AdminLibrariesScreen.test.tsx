@@ -44,7 +44,7 @@ vi.mock("../api/client", async () => {
       deleteLibrary: (...a: unknown[]) => deleteLibrary(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
       getScanStatus: (...a: unknown[]) => getScanStatus(...a),
-      // Each row's Seek preview panel reads its own status; not under test here.
+      // The Seek preview panel lives in the Edit dialog; not under test here.
       getSeekPreviews: () => Promise.reject(new Error("not under test")),
       enrichLibrary: (...a: unknown[]) => enrichLibrary(...a),
     },
