@@ -76,6 +76,13 @@ wrangler kv key put --binding=KEYS_KV envelope --path=../../envelope.json
 rm ../../envelope.json      # clean up the sealed file
 ```
 
+New official builds can also bundle the published envelope as their bootstrap key:
+set `OBELO_BOOTSTRAP_ENVELOPE_URL` (Docker: `--build-arg`) to the Worker URL next to
+`OBELO_APP_ENC_KEY`, with no plaintext provider-key secrets (the legacy
+`OBELO_BOOTSTRAP_*_KEY` path still works; combining the two fails the build). **Bump
+`CACHE_EPOCH` on the Docker build after each publish** — the fetched envelope is not
+in BuildKit's cache key.
+
 Installs pick up the new key on their **next poll** (startup + every N hours). No
 release, no Docker re-pull. The client fails safe throughout: while KV is mid-update
 or unreachable, servers fall through to their bootstrap key and log once — never a

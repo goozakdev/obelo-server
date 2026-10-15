@@ -195,6 +195,15 @@ COPY --from=sign-plugins /out/modules/ ./internal/bundled/modules/
 # OBELO_KEY_ROTATION_URL env var.
 ARG OBELO_ROTATION_URL=""
 
+# RECOMMENDED alternative to the tmdb_key/fanart_key secrets: with this set, the build
+# FETCHES the sealed rotation envelope from the URL (internal/rotation/cmd/fetchpayload),
+# checks it decrypts under the app_enc_key secret (required), and embeds only the
+# CIPHERTEXT payload. Only app_enc_key + this URL are needed. Setting it together with
+# tmdb_key or fanart_key fails the build. Not a secret (a public, ciphertext-only URL).
+# THE FETCHED ENVELOPE IS NOT PART OF THE CACHE KEY: a changed published envelope reuses
+# the cached layer, so bump CACHE_EPOCH whenever the published envelope changes.
+ARG OBELO_BOOTSTRAP_ENVELOPE_URL=""
+
 # WHAT BUSTS THIS LAYER'S CACHE — read before a key rotation.
 #
 # Secret VALUES are deliberately excluded from BuildKit's cache key (that is the point
@@ -251,11 +260,18 @@ RUN --mount=type=secret,id=tmdb_key \
     APP_ENC_KEY=$(read_secret /run/secrets/app_enc_key); \
     RELEASE_PUB=$(read_secret /run/secrets/release_pub_key); \
     BUNDLED_PKG=github.com/goozakdev/obelo-server/internal/bundled; \
+    ENVELOPE=""; \
+    if [ -n "${OBELO_BOOTSTRAP_ENVELOPE_URL}" ]; then \
+      if [ -n "${TMDB_OBF}${FANART_OBF}" ]; then \
+        echo "ERROR: OBELO_BOOTSTRAP_ENVELOPE_URL cannot be combined with the tmdb_key/fanart_key secrets" >&2; exit 1; fi; \
+      ENVELOPE=$(OBELO_BOOTSTRAP_ENVELOPE_URL="${OBELO_BOOTSTRAP_ENVELOPE_URL}" OBELO_APP_ENC_KEY="${APP_ENC_KEY}" go run ./internal/rotation/cmd/fetchpayload); \
+    fi; \
     OBELO_RELEASE_PUBLIC_KEY="${RELEASE_PUB}" go run ./internal/bundled/cmd/checksigned; \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -tags tailscale -ldflags="-s -w \
       -X ${CONFIG_PKG}.bootstrapTMDBKey=${TMDB_OBF} \
       -X ${CONFIG_PKG}.bootstrapFanartKey=${FANART_OBF} \
+      -X ${CONFIG_PKG}.bootstrapEnvelope=${ENVELOPE} \
       -X ${CONFIG_PKG}.kAppEncKey=${APP_ENC_KEY} \
       -X ${CONFIG_PKG}.DefaultKeyRotationURL=${OBELO_ROTATION_URL} \
       -X ${BUNDLED_PKG}.releasePublicKey=${RELEASE_PUB}" \

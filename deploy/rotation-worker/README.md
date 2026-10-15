@@ -107,6 +107,25 @@ a 404 — the bot-shed working.
 Inject the host at **build time** so it stays out of the repo (baked via `-ldflags -X`,
 see `internal/config/bootstrap.go`); in CI these become secrets:
 
+**Recommended:** let the build fetch the sealed envelope you just published, so no
+plaintext provider key is needed in CI — only `OBELO_APP_ENC_KEY` and the URL. The
+build fails if the fetch fails or the payload does not decrypt under the key; only the
+ciphertext is embedded.
+
+```sh
+OBELO_ROTATION_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" \
+OBELO_BOOTSTRAP_ENVELOPE_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" \
+OBELO_APP_ENC_KEY="<same base64 key>" \
+  make build-release
+```
+
+Docker: pass `--secret id=app_enc_key,env=OBELO_APP_ENC_KEY` and
+`--build-arg OBELO_BOOTSTRAP_ENVELOPE_URL=<url>` (no `tmdb_key`/`fanart_key`), and bump
+`CACHE_EPOCH` whenever the published envelope changes — the fetched envelope is not in
+BuildKit's cache key. Combining the URL with the plaintext keys below fails the build.
+
+**Alternative** — bake the plaintext provider keys instead:
+
 ```sh
 OBELO_ROTATION_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" \
 OBELO_APP_ENC_KEY="<same base64 key>" \
