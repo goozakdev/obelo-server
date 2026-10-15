@@ -23,6 +23,14 @@ BIN := bin/obelo
 # so the maintainer host stays out of the open-source repo, not GitHub-searchable).
 # Note OBELO_ROTATION_URL is the BUILD-time default; the RUNTIME override is the
 # separate OBELO_KEY_ROTATION_URL env var read by config.FromEnv.
+#   OBELO_BOOTSTRAP_ENVELOPE_URL             — RECOMMENDED alternative to the two plaintext keys:
+#                                              the build fetches the rotation envelope from
+#                                              this URL (internal/rotation/cmd/fetchpayload),
+#                                              verifies it decrypts under OBELO_APP_ENC_KEY
+#                                              (required), and embeds only the CIPHERTEXT
+#                                              payload. Setting it together with either
+#                                              OBELO_BOOTSTRAP_*_KEY fails the build. Unset =
+#                                              no network access at build.
 # `printf %s "" | base64` is empty, so an unset key injects an empty string.
 #
 # Bundled plugin signing (ADR-0069, .scratch/plugin-inplace-upgrade issue 02). OFFICIAL
@@ -199,7 +207,15 @@ web:
 ## GET /server's features.tailscale — and in nothing else.
 go-build:
 	@[ -z "$$OBELO_RELEASE_PUBLIC_KEY" ] || go run ./internal/bundled/cmd/checksigned
-	go build $(GOTAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/obelo
+	@# Envelope fetch (opt-in). Deliberately a recipe, not $$(shell): `set -e` makes a
+	@# failed fetch abort the build instead of embedding an empty payload.
+	@set -e; ENVELOPE=""; \
+	if [ -n "$$OBELO_BOOTSTRAP_ENVELOPE_URL" ]; then \
+	  if [ -n "$$OBELO_BOOTSTRAP_TMDB_KEY$$OBELO_BOOTSTRAP_FANART_KEY" ]; then \
+	    echo "ERROR: OBELO_BOOTSTRAP_ENVELOPE_URL cannot be combined with OBELO_BOOTSTRAP_TMDB_KEY/_FANART_KEY" >&2; exit 1; fi; \
+	  ENVELOPE=$$(go run ./internal/rotation/cmd/fetchpayload); \
+	fi; \
+	go build $(GOTAGS) -ldflags "$(LDFLAGS) -X $(CONFIG_PKG).bootstrapEnvelope=$$ENVELOPE" -o $(BIN) ./cmd/obelo
 
 ## build-release: the artifact that ships — the Bundled plugin modules, the SPA
 ## bundle, and the Go binary WITH the `tailscale` tag (ADR-0043), matching what
@@ -613,7 +629,7 @@ check-no-bundled-modules-tracked:
 ## scrapers. The authoritative gate is TestBootstrapVarsEmptyInSource (an AST
 ## check run by `make test-go`); this grep is the fast standalone CI guard.
 check-credentials-free:
-	@if grep -nE '(bootstrapTMDBKey|bootstrapFanartKey|kAppEncKey)[[:space:]]+string[[:space:]]*=[[:space:]]*"[^"]' internal/config/bootstrap.go; then \
+	@if grep -nE '(bootstrapTMDBKey|bootstrapFanartKey|kAppEncKey|bootstrapEnvelope)[[:space:]]+string[[:space:]]*=[[:space:]]*"[^"]' internal/config/bootstrap.go; then \
 	  echo "ERROR: a bundled-credential var has a non-empty literal in source (ADR-0032)"; exit 1; \
 	else echo "ok: bundled-credential vars are empty in source"; fi
 

@@ -6,6 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"testing"
+
+	"github.com/goozakdev/obelo-server/internal/rotation"
 )
 
 // setBootstrap installs obfuscated (base64) bootstrap values for the duration of a
@@ -116,7 +118,7 @@ func TestAppEncKeyVerbatim(t *testing.T) {
 }
 
 // TestBootstrapVarsEmptyInSource is the credential-free-repo gate (ADR-0032): it
-// parses bootstrap.go and asserts the three injected vars are declared with NO
+// parses bootstrap.go and asserts the four injected vars are declared with NO
 // initializer (or an empty string literal), so a plaintext key can never be
 // committed to the open-source repo. `make check-credentials-free` is the fast
 // grep equivalent; this AST check is the authoritative one run by `go test`.
@@ -126,7 +128,7 @@ func TestBootstrapVarsEmptyInSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing bootstrap.go: %v", err)
 	}
-	want := map[string]bool{"bootstrapTMDBKey": false, "bootstrapFanartKey": false, "kAppEncKey": false}
+	want := map[string]bool{"bootstrapTMDBKey": false, "bootstrapFanartKey": false, "kAppEncKey": false, "bootstrapEnvelope": false}
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.VAR {
@@ -167,4 +169,72 @@ func exprText(fset *token.FileSet, e ast.Expr) string {
 		return lit.Value
 	}
 	return fset.Position(e.Pos()).String()
+}
+
+// setEnvelope installs a build-injected envelope payload and enc key, restoring the
+// originals afterward. Legacy vars are cleared so the envelope path is isolated.
+func setEnvelope(t *testing.T, payload, enc string) {
+	t.Helper()
+	origEnv, origEnc, origTMDB, origFanart := bootstrapEnvelope, kAppEncKey, bootstrapTMDBKey, bootstrapFanartKey
+	t.Cleanup(func() {
+		bootstrapEnvelope, kAppEncKey, bootstrapTMDBKey, bootstrapFanartKey = origEnv, origEnc, origTMDB, origFanart
+	})
+	bootstrapEnvelope, kAppEncKey, bootstrapTMDBKey, bootstrapFanartKey = payload, enc, "", ""
+}
+
+func testEncKey() string { return base64.StdEncoding.EncodeToString(make([]byte, 32)) }
+
+func sealedPayload(t *testing.T, key string) string {
+	t.Helper()
+	p, err := rotation.Encrypt(key, rotation.Keys{TMDB: "env-tmdb", Fanart: "env-fanart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestBootstrapKeysFromEnvelope(t *testing.T) {
+	key := testEncKey()
+	setEnvelope(t, sealedPayload(t, key), key)
+	if got := BootstrapTMDBKey(); got != "env-tmdb" {
+		t.Errorf("BootstrapTMDBKey() = %q, want env-tmdb", got)
+	}
+	if got := BootstrapFanartKey(); got != "env-fanart" {
+		t.Errorf("BootstrapFanartKey() = %q, want env-fanart", got)
+	}
+}
+
+func TestBootstrapLegacyVarWinsOverEnvelope(t *testing.T) {
+	key := testEncKey()
+	setEnvelope(t, sealedPayload(t, key), key)
+	bootstrapTMDBKey = base64.StdEncoding.EncodeToString([]byte("legacy-tmdb"))
+	if got := BootstrapTMDBKey(); got != "legacy-tmdb" {
+		t.Errorf("BootstrapTMDBKey() = %q, want legacy-tmdb", got)
+	}
+	if got := BootstrapFanartKey(); got != "env-fanart" {
+		t.Errorf("BootstrapFanartKey() = %q, want env-fanart (no legacy fanart var)", got)
+	}
+}
+
+func TestBootstrapEnvelopeDegradesToEmpty(t *testing.T) {
+	key := testEncKey()
+	good := sealedPayload(t, key)
+	wrong := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	cases := []struct{ name, payload, enc string }{
+		{"wrong enc key", good, wrong},
+		{"missing enc key", good, ""},
+		{"malformed payload", "!!! not base64 !!!", key},
+		{"empty payload", "", key},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setEnvelope(t, tc.payload, tc.enc)
+			if got := BootstrapTMDBKey(); got != "" {
+				t.Errorf("BootstrapTMDBKey() = %q, want empty", got)
+			}
+			if got := BootstrapFanartKey(); got != "" {
+				t.Errorf("BootstrapFanartKey() = %q, want empty", got)
+			}
+		})
+	}
 }

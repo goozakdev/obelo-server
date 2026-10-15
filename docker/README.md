@@ -148,6 +148,26 @@ docker build --platform linux/amd64 -f docker/Dockerfile \
   -t ghcr.io/goozakdev/obelo-server:latest .
 ```
 
+**Recommended: fetch the envelope at build time.** Instead of the two provider-key
+secrets, pass the published rotation URL and only the encryption-key secret:
+
+```sh
+export OBELO_APP_ENC_KEY=<base64 AES-256-GCM key>
+
+docker build --platform linux/amd64 -f docker/Dockerfile \
+  --secret id=app_enc_key,env=OBELO_APP_ENC_KEY \
+  --build-arg OBELO_ROTATION_URL=https://<rotation-host>/v1/keys \
+  --build-arg OBELO_BOOTSTRAP_ENVELOPE_URL=https://<rotation-host>/v1/keys \
+  --build-arg CACHE_EPOCH=$(date +%Y-%m-%d) \
+  -t ghcr.io/goozakdev/obelo-server:latest .
+```
+
+The build downloads the envelope, fails if the fetch errors or the payload does not
+decrypt under `app_enc_key`, and embeds only the **ciphertext**; the binary decrypts it
+at runtime. Combining this with `tmdb_key`/`fanart_key` fails the build. The fetched
+envelope is not part of BuildKit's cache key, so bump `CACHE_EPOCH` whenever the
+published envelope changes. The secrets form above remains supported.
+
 A `--mount=type=secret` file exists only while that one `RUN` executes: it never
 becomes a layer, never lands in image metadata, and never enters the build cache.
 `--build-arg` does none of that — the value is written into the build stage's

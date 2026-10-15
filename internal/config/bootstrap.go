@@ -1,8 +1,12 @@
 package config
 
-import "encoding/base64"
+import (
+	"encoding/base64"
 
-// Build-time default metadata credentials (ADR-0032). These three package vars
+	"github.com/goozakdev/obelo-server/internal/rotation"
+)
+
+// Build-time default metadata credentials (ADR-0032). These package vars
 // are EMPTY string literals in source and are populated ONLY by official/Docker
 // builds via `-ldflags -X`, sourced from CI secrets — the plaintext keys never
 // enter the open-source repo. A build-from-source binary therefore ships no
@@ -24,6 +28,11 @@ var (
 	bootstrapTMDBKey   string
 	bootstrapFanartKey string
 	kAppEncKey         string
+	// bootstrapEnvelope is the rotation envelope's CIPHERTEXT payload (base64
+	// nonce‖AES-GCM), fetched at build time from OBELO_BOOTSTRAP_ENVELOPE_URL and
+	// injected verbatim. It is not plaintext: it only yields keys under kAppEncKey.
+	// An alternative to the two legacy vars above; the legacy vars win when set.
+	bootstrapEnvelope string
 )
 
 // DefaultKeyRotationURL is the maintainer-hosted rotation endpoint official builds
@@ -57,11 +66,35 @@ func deobfuscate(v string) string {
 
 // BootstrapTMDBKey returns the de-obfuscated build-injected default TMDB
 // credential, or "" when none was injected (a build-from-source binary).
-func BootstrapTMDBKey() string { return deobfuscate(bootstrapTMDBKey) }
+func BootstrapTMDBKey() string {
+	if k := deobfuscate(bootstrapTMDBKey); k != "" {
+		return k
+	}
+	return envelopeKeys().TMDB
+}
 
 // BootstrapFanartKey returns the de-obfuscated build-injected default fanart.tv
 // credential, or "" when none was injected (a build-from-source binary).
-func BootstrapFanartKey() string { return deobfuscate(bootstrapFanartKey) }
+func BootstrapFanartKey() string {
+	if k := deobfuscate(bootstrapFanartKey); k != "" {
+		return k
+	}
+	return envelopeKeys().Fanart
+}
+
+// envelopeKeys decrypts the build-embedded envelope payload with kAppEncKey. An
+// absent payload, absent key, or any decrypt failure yields zero Keys — the same
+// degrade-to-no-bundled-key as a malformed obfuscated injection.
+func envelopeKeys() rotation.Keys {
+	if bootstrapEnvelope == "" || kAppEncKey == "" {
+		return rotation.Keys{}
+	}
+	keys, err := rotation.Decrypt(kAppEncKey, bootstrapEnvelope)
+	if err != nil {
+		return rotation.Keys{}
+	}
+	return keys
+}
 
 // AppEncKey returns the build-injected base64 AES-256-GCM key used to decrypt the
 // rotation endpoint's payload (ADR-0032), or "" when none was injected. The
