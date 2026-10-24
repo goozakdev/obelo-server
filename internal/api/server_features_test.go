@@ -74,6 +74,12 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 		// exists, which is what the flag claims; the field's behaviour is pinned by the
 		// playback tests, not by route existence.
 		{flag: "remuxSelectedOnly", path: "/api/v1/titles/nonexistent/playback"},
+		// stepDown rides the same POST-only route: the ladder in its decision and the
+		// replacesSessionId request field (ADR-0071); a GET draws a 405.
+		{flag: "stepDown", path: "/api/v1/titles/nonexistent/playback"},
+		// relayCeiling rides the same POST-only route: the ceilingResolution request field
+		// a linked Server sends on a relayed negotiation; a GET draws a 405.
+		{flag: "relayCeiling", path: "/api/v1/titles/nonexistent/playback"},
 		// POST-only, so this GET probe draws a 405 — which proves the route exists,
 		// and existence is all the flag claims. mediaCookieRefresh advertises
 		// POST /auth/media-cookie (appletv-parity/12).

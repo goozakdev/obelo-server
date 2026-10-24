@@ -304,6 +304,9 @@ type onlinePlaybackResponse struct {
 	// Format is "progressive" (a file a <video> plays directly) or "hls" (a playlist
 	// an HLS-capable player plays).
 	Format string `json:"format"`
+	// StepDown is the Step-down ladder (ADR-0071): every rung the Server can
+	// produce for this item, best first, exactly one marked current. Never null.
+	StepDown []stepRungJSON `json:"stepDown"`
 }
 
 // handleOnlinePlayback serves POST /onlineSources/{id}/items/{itemId}/playback:
@@ -324,10 +327,12 @@ func handleOnlinePlayback(deps Deps, sourceID, itemID string) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		constraints, _ := playback.ClampToCeiling(req.Constraints.toDomain(), scope)
+		asked := req.Constraints.toDomain()
+		constraints, _ := playback.ClampToCeiling(asked, scope)
+		ceiling, _ := playback.ClampToCeiling(playback.Constraints{}, scope)
 		sess, unsup, err := deps.Online.Play(r.Context(), onlinesource.PlayInput{
 			UserID: id.User.ID, SourceID: sourceID, ItemID: itemID,
-			Profile: req.DeviceProfile.toDomain(), Constraints: constraints,
+			Profile: req.DeviceProfile.toDomain(), Constraints: constraints, Ceiling: ceiling, Asked: asked,
 		})
 		if errors.Is(err, onlinesource.ErrBusy) {
 			// 503 SERVER_BUSY, exactly as for a Title at the transcode cap (ADR-0009).
@@ -360,6 +365,7 @@ func handleOnlinePlayback(deps Deps, sourceID, itemID string) http.HandlerFunc {
 			SessionID: sess.ID,
 			StreamURL: APIPrefix + streamRoutePrefix + grant.Token + "/" + streamProgressiveArtifact,
 			Format:    onlineFormatProgressive,
+			StepDown:  toStepDown(sess.StepDown),
 		}
 		if sess.Transcoded {
 			out.StreamURL = APIPrefix + streamRoutePrefix + grant.Token + "/" + streamHLSArtifactPrefix + onlineHLSPlaylist

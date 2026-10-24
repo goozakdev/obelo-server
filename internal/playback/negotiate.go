@@ -128,6 +128,12 @@ type Decision struct {
 	// ffmpeg job, no scratch dir and no transcode-cap slot behind such a Decision,
 	// because the re-encoding (if any) is happening on the other household's host.
 	Relay *Relayed
+	// StepDown is the Step-down ladder (ADR-0071): every rung this client may play, best
+	// first (height, then bitrate), exactly one marked current. The Service fills it for
+	// a local Decision; it is never nil there. On a relay Decision it is nil: the
+	// sharer's ladder, localised, rides in Relay.Decision. A rung is only a choice to
+	// send back — the Server keeps no ladder state.
+	StepDown []StepRung
 }
 
 // IsRelay reports whether this Decision came from another Server (ADR-0056 §5).
@@ -267,6 +273,31 @@ func negotiateStreams(profile DeviceProfile, constraints Constraints, ed store.E
 	// gate must judge the Stream actually being delivered — not the File-level codec,
 	// which describes the primary (selectable-video/01). For a single-video File the
 	// Stream and File attributes agree, so this is byte-for-byte the prior behavior.
+	//
+	// Direct play serves the File's bytes unchanged, so the player plays the container-
+	// default video Stream. When the Stream checked here is a different one, the
+	// Decision is a remux (`-map 0:v:N`, ADR-0025) — never a direct play of a Stream
+	// these checks did not approve.
+	if def, ok := pickVideoStream(f); ok && def.ID != video.ID && tier == TierDirectPlay {
+		tier = TierDirectStream
+	}
+	// Direct play also serves every OTHER video track in the File. Under a User
+	// resolution ceiling, a File holding any selectable track above it is therefore
+	// never direct played, even when the track checked here is within the ceiling: it
+	// remuxes that track (-map 0:v:N), which carries only the approved video. A track
+	// of unknown height (0) is not counted as above the ceiling: nothing says it is,
+	// and refusing direct play on missing probe data would remux every such File.
+	// Cover art is not selectable video (SelectableVideoStreams).
+	if tier == TierDirectPlay {
+		if ceil := resolutionHeight(constraints.CeilingResolution); ceil > 0 {
+			for _, s := range SelectableVideoStreams(f) {
+				if s.Height > ceil {
+					tier = TierDirectStream
+					break
+				}
+			}
+		}
+	}
 	videoCodec := firstNonEmpty(video.Codec, f.VideoCodec)
 	support, ok := profile.videoCodec(videoCodec)
 	if !ok {
@@ -392,7 +423,10 @@ func negotiateAudioStreams(profile DeviceProfile, constraints Constraints, ed st
 			Detail: "audio codec " + audioCodec + " cannot be remuxed into HLS (MPEG-TS); a transcode is required",
 		}
 	}
-	if constraints.MaxBitrate > 0 && f.Bitrate > 0 && f.Bitrate > constraints.MaxBitrate {
+	// A Track of unknown bitrate cannot be shown to fit an audio-scale cap, so under one
+	// it is encoded at the cap rather than played as it is (the Step-down ladder's AAC
+	// rungs, ADR-0071). A video-scale cap leaves it alone.
+	if constraints.MaxBitrate > 0 && (f.Bitrate > constraints.MaxBitrate || f.Bitrate == 0 && audioScaleCap(constraints.MaxBitrate)) {
 		return Decision{}, &Unsupported{
 			Reason: ReasonBitrate,
 			Detail: "file bitrate exceeds constraint maxBitrate",
@@ -461,11 +495,22 @@ func SelectEdition(profile DeviceProfile, constraints Constraints, editions []st
 			// stream COPY, so this costs no re-encode — the same bytes, repackaged.
 			// The escalation is visible in the reported tier rather than silent.
 			if rdec, rUnsup := negotiateRemux(profile, constraints, ed, f); rUnsup == nil {
-				if bestRemux == nil || better(rdec, *bestRemux) {
-					d := rdec
-					bestRemux = &d
+				if partsApproved(profile, constraints, rdec) {
+					if bestRemux == nil || better(rdec, *bestRemux) {
+						d := rdec
+						bestRemux = &d
+					}
+					continue
 				}
-				continue
+				// A later part's track at the mapped index fails the checks: a copy would
+				// carry it, so the video is encoded (planVideoFor scales it).
+				if tdec, tUnsup := negotiateTranscode(profile, constraints, ed, f); tUnsup == nil {
+					if bestTranscode == nil || better(tdec, *bestTranscode) {
+						d := tdec
+						bestTranscode = &d
+					}
+					continue
+				}
 			}
 			// Remux refused (it re-runs every non-container gate): fall through to the
 			// transcode fallback below with the honest blocking reason.
@@ -535,14 +580,124 @@ func SelectEdition(profile DeviceProfile, constraints Constraints, editions []st
 	return Decision{}, firstReason
 }
 
+// partsApproved reports whether every part of a MULTI-PART Edition may be COPIED
+// (remuxed, or video-copied) as part 1's Decision describes. The parts are joined by
+// the concat demuxer, which maps by ABSOLUTE ffmpeg stream index taken from part 1's
+// layout, so a later part is only known to carry the approved track when it has the
+// SAME layout as part 1: the same stored Streams, in the same order, with the same
+// ffmpeg Index and the same kind at each position, and the same video codec at the
+// mapped Index. The stored Index (not the slice position) is the identity because the
+// scanner drops data and attachment streams, so positions shift against ffmpeg's
+// numbering. Its track at that Index must then pass the checks part 1's did: decodable
+// by the profile within the session cap (videoStreamDecodable) and within the User's
+// resolution ceiling (a track of unknown height counts as within). A part with no
+// probed Streams cannot be proven identical, so it fails, as does part 1 when it has
+// none. True for an ordinary single-File Edition and for audio-only Decisions, which
+// have no video to carry.
+func partsApproved(profile DeviceProfile, constraints Constraints, dec Decision) bool {
+	if dec.AudioOnly || !dec.Edition.IsMultiPart() {
+		return true
+	}
+	first := dec.File.Streams
+	idx, ok := mappedVideoAbs(dec.File, dec.VideoStream.ID)
+	if !ok {
+		return false
+	}
+	ceil := resolutionHeight(constraints.CeilingResolution)
+	for _, part := range dec.Edition.Parts() {
+		if part.ID == dec.File.ID {
+			continue
+		}
+		if len(part.Streams) != len(first) {
+			return false
+		}
+		var s, f store.Stream
+		for i := range first {
+			if part.Streams[i].Index != first[i].Index || part.Streams[i].Kind != first[i].Kind {
+				return false
+			}
+			if first[i].Index == idx {
+				s, f = part.Streams[i], first[i]
+			}
+		}
+		if s.Codec != f.Codec || isCoverArtStream(s) || !videoStreamDecodable(profile, constraints, s) || ceil > 0 && s.Height > ceil {
+			return false
+		}
+	}
+	return true
+}
+
+// mappedVideoAbs returns the ABSOLUTE ffmpeg stream index (the stored Stream.Index) of
+// the video Stream a Decision maps: the one named by streamID, else the first real (non
+// cover art) video Stream, which ffmpeg's implicit map picks on a single-video File.
+// False when the File has no probed Streams or no such video Stream.
+//
+// The map itself is the relative `-map 0:v:N` (forcedVideoMapIndex). Once partsApproved
+// has shown every part's (Index, kind) sequence equal to part 1's, the Nth video Stream
+// is the same stored-Index track in every part, so the two selectors agree.
+func mappedVideoAbs(f store.File, streamID string) (int, bool) {
+	firstReal := -1
+	for _, s := range f.Streams {
+		if s.Kind != "video" {
+			continue
+		}
+		if streamID != "" && s.ID == streamID {
+			return s.Index, true
+		}
+		if firstReal < 0 && !isCoverArtStream(s) {
+			firstReal = s.Index
+		}
+	}
+	return firstReal, firstReal >= 0
+}
+
+// encodeForParts turns a remux of a multi-part Edition whose parts are not all
+// approved into the video-encode transcode that planVideoFor scales.
+func encodeForParts(profile DeviceProfile, constraints Constraints, dec Decision) Decision {
+	if dec.Tier != TierDirectStream || partsApproved(profile, constraints, dec) {
+		return dec
+	}
+	dec.Tier = TierTranscode
+	dec.RemuxSelectedOnly = false
+	if constraints.MaxBitrate > 0 && (dec.EstimatedBitrate == 0 || dec.EstimatedBitrate > constraints.MaxBitrate) {
+		dec.EstimatedBitrate = constraints.MaxBitrate
+	}
+	return dec
+}
+
 // better reports whether candidate a is a higher-quality direct-play choice than
-// b: more pixels first, then higher bitrate.
+// b: more pixels first, then higher bitrate. Between two audio-only Files the pixels
+// are cover art and never count: lossless audio beats lossy, then the higher bitrate
+// wins (an unknown bitrate, 0, ranks last).
 func better(a, b Decision) bool {
+	if audioOnlyDecision(a) && audioOnlyDecision(b) {
+		if al, bl := losslessAudio(a.File.AudioCodec), losslessAudio(b.File.AudioCodec); al != bl {
+			return al
+		}
+		return a.File.Bitrate > b.File.Bitrate
+	}
 	ah, bh := a.File.Height, b.File.Height
 	if ah != bh {
 		return ah > bh
 	}
 	return a.File.Bitrate > b.File.Bitrate
+}
+
+// audioOnlyDecision says whether a Decision plays a File with no real video Stream (a
+// Track whose only "video" is cover art), the way negotiation decides it.
+func audioOnlyDecision(d Decision) bool {
+	_, ok := defaultVideoStream(DeviceProfile{}, Constraints{}, d.File)
+	return d.AudioOnly || !ok
+}
+
+// losslessAudio says whether an audio codec is lossless.
+func losslessAudio(codec string) bool {
+	switch c := strings.ToLower(strings.TrimSpace(codec)); {
+	case c == "flac", c == "alac", c == "ape", c == "wavpack", c == "tta", c == "mlp", c == "truehd":
+		return true
+	default:
+		return strings.HasPrefix(c, "pcm")
+	}
 }
 
 // firstPresentFile returns the first on-disk File of an Edition (Missing Files
@@ -750,8 +905,10 @@ func resolveVideoStream(detail store.TitleDetail, streamID string) (store.Editio
 // already resolved for the audio/subtitle picks. It mirrors audioSelectionTier from
 // the video side (ADR-0025):
 //
-//   - The default Stream imposes no floor: direct play carries the default video, so
-//     selecting it forces nothing (TierDirectPlay).
+//   - The RANKED Stream (defaultVideoStream, not necessarily the container default)
+//     imposes no floor of its own: selecting it forces nothing (TierDirectPlay). Whether
+//     the File may direct play at all is Negotiate's call, which remuxes when the ranked
+//     Stream is not the container default or a track exceeds the User's ceiling.
 //   - A Stream the client cannot decode must be re-encoded → transcode.
 //   - A decodable NON-DEFAULT Stream can be stream-COPIED, but direct play carries only
 //     the default video, so it escalates at least to remux — and only when a remux is
@@ -760,7 +917,7 @@ func resolveVideoStream(detail store.TitleDetail, streamID string) (store.Editio
 //     floor is transcode.
 //
 // The container/audio verdict reuses Negotiate/negotiateRemux (which evaluate the
-// File's DEFAULT video+audio); that is exact whenever the default is at least as
+// File's RANKED video and default audio); that is exact whenever the default is at least as
 // deliverable as the chosen Stream — true for the common co-packaged case — and at
 // worst over-escalates to transcode, which still delivers the chosen Stream correctly.
 func videoSelectionFloor(profile DeviceProfile, constraints Constraints, ed store.Edition, f store.File, chosen, def store.Stream) Tier {
@@ -995,13 +1152,16 @@ func audioSelectionTier(profile DeviceProfile, constraints Constraints, ed store
 	}
 	// Audio is copy-deliverable; the video/container verdict (against the default
 	// audio) now decides.
-	if _, unsup := Negotiate(profile, constraints, ed, f); unsup == nil {
-		// Fully direct-playable. Only the DEFAULT audio may direct-play; a non-default
-		// selection escalates to remux so the server can -map the chosen Stream.
-		if chosen.IsDefault {
-			return TierDirectPlay
+	if dec, unsup := Negotiate(profile, constraints, ed, f); unsup == nil {
+		// Only a File Negotiate itself direct-plays may direct-play here, and only on its
+		// DEFAULT audio; a non-default selection escalates to remux so the server can -map
+		// the chosen Stream. Negotiate's own remux (the ranked video track is not the
+		// container default, or the container needs repackaging) is kept, since direct
+		// play would serve a track the checks did not approve.
+		if dec.Tier == TierDirectPlay && !chosen.IsDefault {
+			return TierDirectStream
 		}
-		return TierDirectStream
+		return dec.Tier
 	}
 	if _, rUnsup := negotiateRemux(profile, constraints, ed, f); rUnsup == nil {
 		return TierDirectStream

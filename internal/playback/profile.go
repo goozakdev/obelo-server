@@ -78,6 +78,11 @@ type Constraints struct {
 	// MaxBitrate (0 = none). Only an Online negotiation reads it, to tell an Admin's
 	// cap from a bitrate the client merely asked for.
 	CeilingBitrate int64
+	// CeilingResolution is the User's Playback ceiling resolution token when the Scope
+	// carries one (empty = none), whether or not it tightened MaxResolution. Direct
+	// play serves the whole File, so negotiateStreams reads it to refuse direct play of
+	// a File holding any video track above it (distinct from a client-asked MaxResolution).
+	CeilingResolution string
 	// MaxResolution caps the playable resolution across all codecs (e.g. "1080p").
 	// Empty = no cap.
 	MaxResolution string

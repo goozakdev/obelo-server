@@ -502,3 +502,42 @@ func TestReserveTranscodeSharesTheCapWithTitles(t *testing.T) {
 		}
 	}
 }
+
+// TestAudioOnlyTranscodeIsUnmetered: an audio-only transcode (ADR-0071 §6) takes
+// no cap slot — it is refused by nothing and releases nothing — so it is created at
+// a full cap, Transcode load keeps reporting the one video encode, and ending it
+// leaves the count untouched (no decrement of the video encode's slot, no underflow).
+func TestAudioOnlyTranscodeIsUnmetered(t *testing.T) {
+	m := NewManager()
+	m.SetTranscodeCap(1)
+
+	if _, err := m.CreateGoverned(CreateInput{UserID: "u1"}, transcodeDecision("a")); err != nil {
+		t.Fatalf("video re-encode: %v", err)
+	}
+	ao := transcodeDecision("b")
+	ao.AudioOnly = true
+	s, err := m.CreateGoverned(CreateInput{UserID: "u2"}, ao)
+	if err != nil {
+		t.Fatalf("audio-only transcode refused at a full cap: %v", err)
+	}
+	if got := m.TranscodeLoad(); got.Active != 1 || got.Cap != 1 {
+		t.Errorf("TranscodeLoad = %+v with one video encode + one audio-only, want Active=1 Cap=1", got)
+	}
+
+	m.End(s.ID)
+	if got := m.ActiveTranscodes(); got != 1 {
+		t.Errorf("activeTranscodes = %d after ending the audio-only session, want 1 (it never held a slot)", got)
+	}
+
+	// With no video encode left, ending an audio-only session must not underflow.
+	m2 := NewManager()
+	m2.SetTranscodeCap(1)
+	s2, err := m2.CreateGoverned(CreateInput{UserID: "u3"}, ao)
+	if err != nil {
+		t.Fatalf("audio-only create: %v", err)
+	}
+	m2.End(s2.ID)
+	if got := m2.ActiveTranscodes(); got != 0 {
+		t.Errorf("activeTranscodes = %d after audio-only create+end, want 0", got)
+	}
+}

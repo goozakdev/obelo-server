@@ -75,6 +75,10 @@ type RelayRequest struct {
 	Constraints       Constraints
 	StartPosition     int64
 	RemuxSelectedOnly bool
+	// ReplacesSessionID is the SHARER's id of the relayed session this play
+	// supersedes (the local replaced session's RemoteSessionID), so the swap happens
+	// against the sharer's caps. Empty when nothing is replaced.
+	ReplacesSessionID string
 }
 
 // RelayAnswer is what the sharer said, plus the two ids this side needs to hold
@@ -91,6 +95,10 @@ type RelayAnswer struct {
 	// mirrored row and measure the Session against its duration.
 	RemoteEditionID string
 	Tier            Tier
+	// CeilingForwarded is true when the sharer was sent the User's resolution ceiling
+	// (features.relayCeiling), so it applied the ceiling itself and its answer needs no
+	// home-side re-ask.
+	CeilingForwarded bool
 	// Decision is the sharer's whole answer, decoded but not reshaped. It is
 	// re-served to the client with the ids and URLs rewritten and NOTHING else
 	// touched (see api's relay decision), which is what "the sharer's answers pass
@@ -131,15 +139,21 @@ func (s *Service) relayed(libraryID string) bool {
 // The Constraints handed to it are already clamped by this household's own
 // ceiling, so the request that leaves is the strictest of what the client asked
 // for and what this Server allows — and the sharer applies its own on top.
-func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decision, Session, *Unsupported, *ServerBusy, error) {
+func (s *Service) negotiateRelay(req Request, asked Constraints, detail store.TitleDetail) (Decision, Session, *Unsupported, *ServerBusy, error) {
 	// Refuse at the stream limit BEFORE asking the sharer: once it has opened a
 	// session, a local refusal leaves nothing here to end it, and it would run on the
 	// friend's server until its idle reaper fires. CreateGoverned below stays the
 	// authoritative check.
-	if err := s.sessions.CheckStreamLimit(req.UserID, req.Scope.MaxStreams); err != nil {
+	if err := s.sessions.CheckStreamLimitReplacing(req.UserID, req.DeviceID, req.Scope.MaxStreams, req.ReplacesSessionID); err != nil {
 		return Decision{}, Session{}, nil, nil, err
 	}
-	ans, err := s.relay.RelayNegotiate(context.Background(), RelayRequest{
+	// Only the caller's own relayed session translates to a sharer-side id; anything
+	// else (not theirs, local, expired) is sent as absent.
+	remoteReplaces := ""
+	if old, ok := s.sessions.ReplaceableSession(req.UserID, req.DeviceID, req.ReplacesSessionID); ok {
+		remoteReplaces = old.RemoteSessionID
+	}
+	rr := RelayRequest{
 		LibraryID:         detail.LibraryID,
 		TitleID:           detail.ID,
 		EditionID:         req.EditionID,
@@ -150,10 +164,23 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 		Constraints:       req.Constraints,
 		StartPosition:     req.StartPosition,
 		RemuxSelectedOnly: req.RemuxSelectedOnly,
-	})
+		ReplacesSessionID: remoteReplaces,
+	}
+	ans, err := s.relay.RelayNegotiate(context.Background(), rr)
 	if err != nil {
 		return Decision{}, Session{}, nil, nil, err
 	}
+	ans, unsup, err := s.enforceHiddenTrackCeiling(rr, ans)
+	if unsup != nil || err != nil {
+		return Decision{}, Session{}, unsup, nil, err
+	}
+
+	// The sharer built the Step-down ladder (ADR-0071); here its Edition ids become
+	// local ones and the rungs above this household's ceiling for the User are dropped.
+	if ans.Decision == nil {
+		ans.Decision = map[string]any{}
+	}
+	ans.Decision["stepDown"] = s.relayStepDown(ans.Decision["stepDown"], detail, req.Scope, req.EditionID, asked)
 
 	dec := Decision{
 		Tier: ans.Tier,
@@ -184,6 +211,9 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 		DeviceID:      req.DeviceID,
 		TitleID:       req.TitleID,
 		StartPosition: req.StartPosition,
+		// The local swap still happens under this Server's own caps, whatever the
+		// sharer did with its half.
+		ReplacesSessionID: req.ReplacesSessionID,
 		// This household's own concurrent-stream ceiling still applies (ADR-0054 §2):
 		// it is a statement about this User, and a stream that costs this Server only
 		// bandwidth is still a stream they are taking. The sharer counts its own, over
@@ -203,6 +233,93 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 	}
 	s.askRelayMarkers(dec.Relay, sess.DurationMs)
 	return dec, sess, nil, nil, nil
+}
+
+// enforceHiddenTrackCeiling is the home half of the ceiling rule that a File holding
+// ANY video track above the User's resolution ceiling is never direct played, since
+// direct play serves the whole File. The sharer's Scope is its `remote` User's and
+// carries no such ceiling, so its own gate never fires and this Server cannot trust a
+// directPlay answer. When one comes back for a File with a non-cover-art track above
+// the ceiling, the sharer's session is ended and the sharer is asked once more naming
+// the track it had ranked (the one its videoStreams list flags default) with
+// remuxSelectedOnly, which makes it a copy-only remux of that track. A sharer that still answers directPlay, or whose
+// ranked track is itself above the ceiling, is refused like an unplayable local File
+// (501 TRANSCODE_REQUIRED, reason resolution) and its session ended. A Server with no
+// ceiling, and any answer that is not directPlay, pass untouched. So does the answer of
+// a sharer that was sent the ceiling (CeilingForwarded, features.relayCeiling) when its
+// answer is sound: it applied the ceiling itself, and the re-ask is only the fallback
+// for sharers that cannot. Such a sharer that still answers directPlay of a File
+// holding a track above the ceiling is not trusted: no re-ask, the same refusal.
+func (s *Service) enforceHiddenTrackCeiling(rr RelayRequest, ans RelayAnswer) (RelayAnswer, *Unsupported, error) {
+	ceil := resolutionHeight(rr.Constraints.CeilingResolution)
+	if ceil == 0 || ans.Tier != TierDirectPlay {
+		return ans, nil, nil
+	}
+	approved, over := hiddenTrackAbove(ans.Decision["videoStreams"], ceil)
+	if !over {
+		return ans, nil, nil
+	}
+	stray := &Relayed{LinkID: ans.LinkID, RemoteSessionID: ans.RemoteSessionID}
+	refuse := func() (RelayAnswer, *Unsupported, error) {
+		return RelayAnswer{}, &Unsupported{
+			Reason: ReasonResolution,
+			Detail: "the file holds a video track above the " + rr.Constraints.CeilingResolution + " ceiling and cannot be direct played",
+		}, nil
+	}
+	if ans.CeilingForwarded {
+		s.endRemoteSession(stray)
+		return refuse()
+	}
+	localID := ""
+	if rs, ok := s.store.(RemoteIDStore); ok && approved != "" {
+		if id, err := rs.LocalIDForRemote(store.ExportStream, approved); err == nil {
+			localID = id
+		}
+	}
+	// End the stray session before asking again: it holds one of the `remote` User's
+	// stream slots at the sharer, which the second ask would otherwise run into.
+	s.endRemoteSession(stray)
+	if localID == "" {
+		return refuse()
+	}
+	// Naming the track alone is not enough: when it is the File's container default the
+	// sharer, which has no ceiling to apply, still answers directPlay. remuxSelectedOnly
+	// is the existing field that forces a copy-only remux of the selected pair.
+	rr.VideoStreamID = localID
+	rr.RemuxSelectedOnly = true
+	again, err := s.relay.RelayNegotiate(context.Background(), rr)
+	if err != nil {
+		return RelayAnswer{}, nil, err
+	}
+	if again.Tier == TierDirectPlay {
+		s.endRemoteSession(&Relayed{LinkID: again.LinkID, RemoteSessionID: again.RemoteSessionID})
+		return refuse()
+	}
+	return again, nil, nil
+}
+
+// hiddenTrackAbove reads a relayed Decision's videoStreams: the id of the track the
+// sharer flagged default (its ranked, delivered pick; "" when none, or when the pick
+// is itself above ceil), and whether any track is above ceil. A track of unknown
+// height counts as within, as locally.
+func hiddenTrackAbove(raw any, ceil int) (approved string, over bool) {
+	list, _ := raw.([]any)
+	pickHeight := 0
+	for _, e := range list {
+		m, _ := e.(map[string]any)
+		h := int(jsonInt(m["height"]))
+		if h > ceil {
+			over = true
+		}
+		if d, _ := m["isDefault"].(bool); d && approved == "" {
+			approved, _ = m["id"].(string)
+			pickHeight = h
+		}
+	}
+	if pickHeight > ceil {
+		approved = ""
+	}
+	return approved, over
 }
 
 // RelayEnder ends the session the sharer opened. *link.Service satisfies it. It

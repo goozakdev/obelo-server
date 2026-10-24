@@ -1003,6 +1003,10 @@ type AudioPlan struct {
 	// actually express. Copying is exempt: a copied stream keeps whatever layout it
 	// already had. 0 when unknown, which emits no -ac and leaves ffmpeg's default.
 	SourceChannels int
+	// MaxBitrate, when > 0 and the audio is re-encoded, holds the AAC output to this
+	// bitrate in bits/sec (-b:a). Set only for an audio-only job under a bitrate cap
+	// (the Step-down ladder's music rungs, ADR-0071). 0 leaves ffmpeg's AAC default.
+	MaxBitrate int64
 }
 
 // adtsExpressibleChannels maps a channel count to the nearest count at or below it
@@ -1265,6 +1269,9 @@ func TranscodeArgs(job TranscodeJob) []string {
 			args = append(args, "-c:a", audioEncoderAAC)
 			if ch := encodedAudioChannels(job.Audio.MaxChannels, job.Audio.SourceChannels); ch > 0 {
 				args = append(args, "-ac", strconv.Itoa(ch))
+			}
+			if job.Audio.MaxBitrate > 0 {
+				args = append(args, "-b:a", strconv.FormatInt(job.Audio.MaxBitrate, 10))
 			}
 		}
 	}

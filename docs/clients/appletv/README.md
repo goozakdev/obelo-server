@@ -8,6 +8,7 @@ Self-contained documentation for building the tvOS client in its **own repositor
 | --- | --- |
 | [integration-playbook.md](./integration-playbook.md) | The choreography: cold start, auth (bearer header incl. mpv media requests), playback state machine, progress/keepalive + track-memory write-back, local track switching, SSE, the error-recovery matrix, and **linked servers** (§9 — the `linked`/`available` treatment every Apple client owes, and the invite scan the iPhone/iPad app owns). |
 | [capability-profile.md](./capability-profile.md) | The exact libmpv `deviceProfile` to send (broad containers/codecs, `textSubtitleFormats` for original-format subs) and the tier each file type lands on. |
+| [../step-down.md](../step-down.md) | The shared, normative rules for automatic step-down (ADR-0071): ladder walking, triggers, step-up, refusals, music and remote receivers. Link to it; do not restate it. |
 | [test-harness.md](./test-harness.md) | Booting a disposable Obelo backend with generated media fixtures to develop and test against. |
 | [design-language.md](./design-language.md) | The Obelo visual language (flat wireframe, lime accent, media-first) adapted to the tvOS 10-foot, focus-driven UI — including the fully-custom player overlay libmpv requires. |
 

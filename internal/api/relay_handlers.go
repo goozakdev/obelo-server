@@ -133,6 +133,13 @@ func serveRelayMedia(deps Deps, w http.ResponseWriter, r *http.Request, sess pla
 		writeError(w, http.StatusNotFound, codeNotFound, "session media unavailable", nil)
 		return
 	}
+	// The raw File is only what a directPlay session is entitled to (handleSessionStream).
+	// This side checks the tier the sharer reported itself, so a sharer that predates
+	// that guard cannot hand over a File the Playback ceiling refused. Same 404 body.
+	if tail == "sessions/"+sess.RemoteSessionID+"/stream" && sess.Tier != playback.TierDirectPlay {
+		writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)
+		return
+	}
 	// A HEAD is fetched upstream as a GET and its body dropped below: the sharer's
 	// media routes are GET-only (requireMethod), so relaying the HEAD itself would
 	// answer the viewer's HEAD with the sharer's 405 for a GET that works.

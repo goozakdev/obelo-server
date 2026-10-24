@@ -12,7 +12,7 @@
 ADR-0025 justifies the capability-defaulted video Stream this way:
 
 > This delivers the "avoid transcoding" half of the multi-bitrate case *for free and without ABR* —
-> a client that cannot decode a 4K HEVC Stream gets a co-packaged 1080p H.264 Stream **direct**,
+> a client that cannot decode a 4K HEVC Stream gets a co-packaged 1080p H.264 Stream **remuxed** (`-map 0:v:N`, never direct play, which carries only the container default: the File's first `is_default` video track, else its first track),
 > chosen once at negotiation.
 
 Literally true, and it does say *"avoid transcoding"* — the "free" is CPU. But it reads as covering

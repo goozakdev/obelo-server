@@ -52,9 +52,13 @@ type Session struct {
 	// VideoCopy marks a TierTranscode session that copies the video and transcodes
 	// only the audio (ADR-0024). It was NOT counted against the transcode cap (no
 	// video encode), so End/Reap must not decrement the counter for it — the release
-	// is gated on `Tier == TierTranscode && !VideoCopy`, mirroring the create-time
+	// is gated on meteredTranscode, mirroring the create-time
 	// metering.
 	VideoCopy bool
+	// AudioOnly marks a TierTranscode session for an audio-only File (a Music Track).
+	// Like VideoCopy it is not metered (ADR-0071 §6), so End/Reap must not release a
+	// slot for it; see meteredTranscode.
+	AudioOnly bool
 	// FMP4 is true when the session delivers fragmented-MP4 (a copied HEVC video,
 	// ADR-0024). The demuxed audio-rendition runtimes read it to name their .m4s
 	// segments + init segment so they share the video variant's container.
@@ -108,7 +112,19 @@ type Session struct {
 	// when it starts (relay.go), the ask ending with the session; nil for every
 	// local session.
 	relayMarkers *relayMarkers
+	// replaced marks a session whose replacement has been minted (ADR-0071 §5): it no
+	// longer counts for its User's stream limit, and ends when the grace period elapses
+	// or on its own DELETE. slotFreed records that its transcode slot was already
+	// released when it was replaced, so End/Reap must not release it a second time.
+	replaced  bool
+	slotFreed bool
 }
+
+// ReplaceGrace is how long a session lives on after a negotiation that named it in
+// replacesSessionId has minted its replacement (ADR-0071 §5): long enough for the
+// client to load the new URL and DELETE the old one, short enough that a client
+// that never does cannot hold two streams for long.
+const ReplaceGrace = 30 * time.Second
 
 // SessionPart is one part of a Session's timeline: its File and that File's
 // duration when the session started.
@@ -271,6 +287,12 @@ type Manager struct {
 	// End/Reap, so a freed slot reliably lets a previously-rejected transcode in.
 	transcodeCap     int
 	activeTranscodes int
+
+	// replaceGrace is how long a replaced session lives on after its replacement is
+	// minted (ReplaceGrace unless a test shortened it). graceTimers holds the pending
+	// end of each replaced session, keyed by session id; End stops and drops it.
+	replaceGrace time.Duration
+	graceTimers  map[string]*time.Timer
 }
 
 // NewManager builds an empty session Manager with no HLS runtime — direct play
@@ -284,6 +306,8 @@ func NewManager() *Manager {
 		audioDurations: make(map[string]map[string]float64),
 		audioStreams:   make(map[string]map[string]bool),
 		now:            time.Now,
+		replaceGrace:   ReplaceGrace,
+		graceTimers:    make(map[string]*time.Timer),
 	}
 }
 
@@ -304,6 +328,17 @@ func NewRemuxManager(runner transcode.Runner, scratchRoot string) *Manager {
 // here at construction; tests set a small cap (e.g. 1) to exercise the busy
 // path. It is set once at boot before any session exists, so it needs no lock.
 func (m *Manager) SetTranscodeCap(n int) { m.transcodeCap = n }
+
+// SetReplaceGrace overrides ReplaceGrace for tests, which cannot wait 30 s. Set
+// before any replacement exists.
+func (m *Manager) SetReplaceGrace(d time.Duration) { m.replaceGrace = d }
+
+// meteredTranscode reports whether a session takes a slot of the transcode cap:
+// only a local, video-encoding TierTranscode does. The create-time reservation and
+// both releases (End, Reap) use this one predicate so they cannot drift apart.
+func meteredTranscode(tier Tier, videoCopy, audioOnly, relay bool) bool {
+	return tier == TierTranscode && !videoCopy && !audioOnly && !relay
+}
 
 // ErrTranscodeCapFull is returned by Create when a TierTranscode session would
 // exceed the configured concurrent-transcode cap (ADR-0009: reject-don't-queue).
@@ -350,21 +385,63 @@ func (e *StreamLimitError) Unwrap() error { return ErrStreamLimit }
 // CreateGoverned's own check, under the insertion lock, stays authoritative. 0
 // (uncapped) never refuses.
 func (m *Manager) CheckStreamLimit(userID string, maxStreams int) error {
+	return m.CheckStreamLimitReplacing(userID, "", maxStreams, "")
+}
+
+// CheckStreamLimitReplacing is CheckStreamLimit for a negotiation that names a
+// session it replaces (ADR-0071 §5): the replaced session, if it is the caller's own,
+// is counted as already gone, exactly as CreateGoverned will count it.
+func (m *Manager) CheckStreamLimitReplacing(userID, deviceID string, maxStreams int, replacesID string) error {
 	if maxStreams <= 0 {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	active := 0
-	for _, existing := range m.sessions {
-		if existing.UserID == userID {
-			active++
-		}
-	}
+	active := m.streamCountLocked(userID, m.replaceTargetLocked(userID, deviceID, replacesID))
 	if active >= maxStreams {
 		return &StreamLimitError{Active: active, Limit: maxStreams}
 	}
 	return nil
+}
+
+// replaceTargetLocked resolves a replacesSessionId to the session it may replace, or
+// "" when it may replace nothing: an unknown or expired id, one already replaced, or
+// one that is not this User's on this Device. The caller holds m.mu.
+func (m *Manager) replaceTargetLocked(userID, deviceID, id string) string {
+	if id == "" {
+		return ""
+	}
+	s, ok := m.sessions[id]
+	if !ok || s.replaced || s.UserID != userID || s.DeviceID != deviceID {
+		return ""
+	}
+	return id
+}
+
+// ReplaceableSession returns the session a negotiation by userID on deviceID would
+// replace by naming id, so the relay can translate it to the sharer's id. False for
+// anything replaceTargetLocked refuses.
+func (m *Manager) ReplaceableSession(userID, deviceID, id string) (Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target := m.replaceTargetLocked(userID, deviceID, id)
+	if target == "" {
+		return Session{}, false
+	}
+	return m.sessions[target], true
+}
+
+// streamCountLocked counts the User's unended sessions that still take a stream:
+// a replaced session does not (its replacement does), nor does skip, the one a
+// pending replacement is about to supersede. The caller holds m.mu.
+func (m *Manager) streamCountLocked(userID, skip string) int {
+	active := 0
+	for id, existing := range m.sessions {
+		if existing.UserID == userID && !existing.replaced && id != skip {
+			active++
+		}
+	}
+	return active
 }
 
 // CreateInput is what Create needs beyond the negotiated Decision: who owns the
@@ -429,6 +506,12 @@ type CreateInput struct {
 	// down rather than the Manager reading a User's ceiling itself, because the
 	// Scope is already resolved once per request and the Manager holds no store.
 	MaxStreams int
+	// ReplacesSessionID, when it names a live session of the SAME User and Device
+	// that has not already been replaced, makes this create a swap (ADR-0071 §5): under
+	// the lock that checks the stream limit and the transcode cap, that session is
+	// counted as already gone. Anything else — unknown, expired, someone else's —
+	// is treated as absent, never an error and never a way to free another User's slot.
+	ReplacesSessionID string
 }
 
 // Create records a new Session for a Decision and returns it (the unmetered
@@ -449,8 +532,9 @@ func (m *Manager) Create(in CreateInput, d Decision) Session {
 // scratchRoot and registers a runtime so the first manifest/segment request can
 // lazily start ffmpeg; direct play gets no scratch.
 //
-// Metering (ADR-0009): only a TierTranscode session counts against the cap. When
-// the tier is transcode and the cap is already full, it returns
+// Metering (ADR-0009): only a video-encoding transcode counts against the cap
+// (see meteredTranscode). When such a session is requested and the cap is
+// already full, it returns
 // (zero, ErrTranscodeCapFull) WITHOUT creating a session — reject-don't-queue.
 // Direct play and remux are never metered and never rejected. The check and the
 // counter increment happen under the same lock as the map insertion, so two
@@ -470,6 +554,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		Parts:         sessionParts(d),
 		Tier:          d.Tier,
 		VideoCopy:     d.VideoCopy,
+		AudioOnly:     d.AudioOnly,
 		FMP4:          d.UsesFMP4(),
 		Demuxed:       IsDemuxed(d),
 		AudioStreamID: d.AudioStream.ID,
@@ -576,6 +661,10 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		}
 	}
 	m.mu.Lock()
+	// A replacesSessionId (ADR-0071 §5) is resolved under this same lock, so the
+	// replaced session is counted as gone by both checks below and a refusal leaves it
+	// untouched: nothing is marked until both have passed.
+	target := m.replaceTargetLocked(in.UserID, in.DeviceID, in.ReplacesSessionID)
 	// The User's own concurrent-stream ceiling (ADR-0054 §2), checked before the
 	// server-wide transcode cap because it is the narrower, per-User statement: a
 	// User at their limit is refused whatever tier they would have played at. It
@@ -583,12 +672,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 	// lock as the insertion, so two simultaneous negotiations cannot both slip past
 	// a limit of one. 0 (uncapped) never counts and never refuses.
 	if in.MaxStreams > 0 {
-		active := 0
-		for _, existing := range m.sessions {
-			if existing.UserID == in.UserID {
-				active++
-			}
-		}
+		active := m.streamCountLocked(in.UserID, target)
 		if active >= in.MaxStreams {
 			m.mu.Unlock()
 			return Session{}, &StreamLimitError{Active: active, Limit: in.MaxStreams}
@@ -606,11 +690,32 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 	// the job under its own governance — counting it twice would let one friend's
 	// library exhaust a budget it never spends (ADR-0056 §5: "this Server pays
 	// bandwidth, never CPU").
-	if d.Tier == TierTranscode && !d.VideoCopy && d.Relay == nil {
-		if m.transcodeCap > 0 && m.activeTranscodes >= m.transcodeCap {
+	// An AUDIO-ONLY transcode is unmetered too (ADR-0071 §6): it has no video to
+	// encode, so it costs about what a video copy's audio re-encode does, and a
+	// listener stepping down a music ladder must never be refused by a full video cap.
+	if meteredTranscode(d.Tier, d.VideoCopy, d.AudioOnly, d.Relay != nil) {
+		held := m.activeTranscodes
+		if t, ok := m.sessions[target]; ok && meteredTranscode(t.Tier, t.VideoCopy, t.AudioOnly, t.IsRelay()) && !t.slotFreed {
+			held--
+		}
+		if m.transcodeCap > 0 && held >= m.transcodeCap {
 			m.mu.Unlock()
 			return Session{}, ErrTranscodeCapFull
 		}
+	}
+	// Both checks passed: the swap now happens. The replaced session stops counting
+	// and its transcode slot is released exactly once (slotFreed guards End/Reap),
+	// before the replacement takes its own, so the load never reads 2.
+	if old, ok := m.sessions[target]; ok {
+		old.replaced = true
+		if meteredTranscode(old.Tier, old.VideoCopy, old.AudioOnly, old.IsRelay()) && !old.slotFreed {
+			old.slotFreed = true
+			m.releaseTranscodeSlot()
+		}
+		m.sessions[target] = old
+		m.graceTimers[target] = time.AfterFunc(m.replaceGrace, func() { m.End(target) })
+	}
+	if meteredTranscode(d.Tier, d.VideoCopy, d.AudioOnly, d.Relay != nil) {
 		m.activeTranscodes++
 	}
 	m.sessions[s.ID] = s
@@ -819,6 +924,7 @@ func (m *Manager) End(id string) bool {
 		return false
 	}
 	delete(m.sessions, id)
+	m.stopGraceLocked(id)
 	rt := m.runtimes[id]
 	delete(m.runtimes, id)
 	// Collect the session's demuxed audio rendition runtimes so they are torn down
@@ -834,7 +940,7 @@ func (m *Manager) End(id string) bool {
 	// previously-rejected transcode can take it immediately (ADR-0009). Only a
 	// transcode session ever incremented the counter, so only it decrements — and
 	// a relay never did (the encode is the sharer's).
-	if s.Tier == TierTranscode && !s.VideoCopy && !s.IsRelay() {
+	if meteredTranscode(s.Tier, s.VideoCopy, s.AudioOnly, s.IsRelay()) && !s.slotFreed {
 		m.releaseTranscodeSlot()
 	}
 	m.mu.Unlock()
@@ -852,6 +958,15 @@ func (m *Manager) End(id string) bool {
 	// above already left), so a DELETE on an unknown/ended id emits nothing.
 	m.notify(endedEvent(s))
 	return true
+}
+
+// stopGraceLocked cancels a replaced session's pending grace-period end, which a
+// DELETE or reap has just made moot. The caller holds m.mu.
+func (m *Manager) stopGraceLocked(id string) {
+	if t, ok := m.graceTimers[id]; ok {
+		t.Stop()
+		delete(m.graceTimers, id)
+	}
 }
 
 // ReserveTranscode takes one slot of the concurrent-transcode cap for a transcode
@@ -1021,6 +1136,7 @@ func (m *Manager) endWhere(end func(Session) bool) int {
 	for id, s := range m.sessions {
 		if end(s) {
 			delete(m.sessions, id)
+			m.stopGraceLocked(id)
 			// Reap the session's demuxed audio rendition runtimes first (shared-scratch,
 			// so they only kill ffmpeg) so an abandoned rendition encode never outlives
 			// the session (audio-streams/03) — then the video runtime removes the scratch.
@@ -1038,8 +1154,9 @@ func (m *Manager) endWhere(end func(Session) bool) int {
 			// Reaping frees the transcode slot exactly as a clean DELETE does, so an
 			// abandoned transcode never permanently holds a cap slot (ADR-0009). A
 			// video-copy transcode never took a slot, so it never releases one (ADR-0024),
-			// and neither did a relay (the encode is the sharer's, ADR-0056 §5).
-			if s.Tier == TierTranscode && !s.VideoCopy && !s.IsRelay() {
+			// and neither did an audio-only one (ADR-0071) or a relay (the encode is the
+			// sharer's, ADR-0056 §5).
+			if meteredTranscode(s.Tier, s.VideoCopy, s.AudioOnly, s.IsRelay()) && !s.slotFreed {
 				m.releaseTranscodeSlot()
 			}
 			// A reaped session ends exactly as a clean DELETE does (the headline

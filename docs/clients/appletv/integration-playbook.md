@@ -87,7 +87,7 @@ This is **both** watch-state reporting and the session keepalive. The server rea
 
 **Seek** — mpv seeks via byte-range (direct play) or within the HLS manifest (transcode). Never needs a new session.
 
-**Re-negotiate** (new decision → new session → `loadfile` the new URL at the current position, then `DELETE` the old session) only when `constraints` change — in practice: the user picks a quality cap that forces a transcode, or you drop the cap back to direct play.
+**Re-negotiate** (send the old session's id as `replacesSessionId` on the negotiate, so the server swaps it inside the transcode-cap and `maxStreams` checks instead of refusing you for the slot it holds; then `loadfile` the new URL at the current position, then `DELETE` the old session — if you never do, the server ends it 30 s after the swap) only when `constraints` change — in practice: the user picks a quality cap that forces a transcode, or you drop the cap back to direct play.
 
 ## 5. Track selection — mostly local, report the picks
 

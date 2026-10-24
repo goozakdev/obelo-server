@@ -137,6 +137,21 @@ func (m *Metadata) Features() map[string]bool {
 		// branch on this rather than a version — an older server rejects the unknown field
 		// with 400 — and grey the "Force Remux on Server" affordance when it is absent.
 		"remuxSelectedOnly": true,
+		// stepDown advertises the two halves of automatic step-down (ADR-0071): every
+		// playback decision carries a `stepDown` ladder, and the playback route accepts
+		// `replacesSessionId` so a client can swap its stream inside the cap. A client
+		// MUST branch on this rather than a version — an older server rejects
+		// replacesSessionId with 400 (an unknown field), so the negotiate-first swap would
+		// fail outright — and keep DELETE-then-negotiate and manual-only stepping when it
+		// is absent.
+		"stepDown": true,
+		// relayCeiling advertises the ceilingResolution request field on the playback
+		// route, which a LINKED Server (never a client) sends on a relayed negotiation so
+		// this one applies its User's resolution ceiling as its own (directplay-ceiling
+		// bypass). A linked Server MUST branch on this rather than a version — an older
+		// server rejects the unknown field with 400 — and re-ask for the approved track
+		// itself when it is absent.
+		"relayCeiling": true,
 		// mediaCookieRefresh advertises POST /auth/media-cookie: a bearer-authenticated
 		// re-issue of the HttpOnly ms_media cookie carrying the CURRENT bearer's token
 		// (appletv-parity/12). The web instant user switch swaps the bearer from JS but

@@ -189,6 +189,11 @@ type Service struct {
 	// onPlay is told the id of the File a new session starts playing (Seek preview
 	// generation moves it to the front of its queue). Nil until SetOnPlay.
 	onPlay func(fileID string)
+	// canTranscode is whether this host can transcode at all (a usable ffmpeg was
+	// resolved at startup, the handshake's features.transcode). The Step-down ladder
+	// offers Transcode rungs only when it is true. Set by SetCanTranscode; false in a
+	// bare Service.
+	canTranscode bool
 }
 
 // Governance holds the ADR-0009 governance knobs the Service applies: the global
@@ -251,6 +256,10 @@ func NewService(s interface {
 	return svc
 }
 
+// SetCanTranscode records whether the host can transcode, which decides whether the
+// Step-down ladder carries Transcode rungs (ADR-0071). Set once at boot.
+func (s *Service) SetCanTranscode(ok bool) { s.canTranscode = ok }
+
 // SetOnPlay registers what is told, with a File's id, each time a Playback session
 // starts on it. It must not block.
 func (s *Service) SetOnPlay(f func(fileID string)) { s.onPlay = f }
@@ -296,7 +305,15 @@ type Request struct {
 	Profile       DeviceProfile
 	Constraints   Constraints
 	StartPosition int64
-	EditionID     string // "" → server auto-selects the best playable Edition
+	// ReplacesSessionID, when set, names the caller's own live session this
+	// negotiation supersedes (ADR-0071 §5): the stream-limit and transcode-cap checks
+	// count it as already gone, and it ends after ReplaceGrace or on its own DELETE.
+	ReplacesSessionID string
+	// CeilingResolution is a resolution ceiling forwarded by a linked home Server
+	// (features.relayCeiling): the home User's Playback ceiling, applied here on top of
+	// the Scope's own. It can only lower the effective ceiling, never raise it.
+	CeilingResolution string
+	EditionID         string // "" → server auto-selects the best playable Edition
 	// BurnSubtitleID, when set, selects an IMAGE Subtitle track to burn into the
 	// video frames (ADR-0020, subtitles/04). It ESCALATES negotiation to the
 	// transcode tier (which consumes a governance cap slot and can return
@@ -440,6 +457,8 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// every args builder sees one consistent set of limits, and the existing tiering
 	// transcodes a too-large File down instead of hiding it. req is a value, so this
 	// tightens only this negotiation's copy.
+	asked := req.Constraints
+	req.Scope.MaxResolution = lowerResolutionCeiling(req.Scope.MaxResolution, req.CeilingResolution)
 	clamped, ceilingBound := clampToCeiling(req.Constraints, req.Scope)
 	req.Constraints = clamped
 
@@ -450,7 +469,7 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// everything below it is about a File on this disk, which a mirrored Title does
 	// not have.
 	if s.relayed(detail.LibraryID) {
-		return s.negotiateRelay(req, detail)
+		return s.negotiateRelay(req, asked, detail)
 	}
 
 	dec, unsup := SelectEdition(req.Profile, req.Constraints, detail.Editions, req.EditionID)
@@ -470,105 +489,12 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// Title detail) fills it here.
 	dec.Subtitles = buildSubtitleTracks(dec.File, detail.Subtitles)
 
-	// Image-subtitle burn-in escalation (ADR-0020, subtitles/04): a burnSubtitleId
-	// that resolves to an image track FORCES the transcode tier with the subtitle
-	// burned into the frames — even if the File would otherwise direct-play or remux.
-	// A text/unknown id has no image sub to burn, so it is ErrBurnSubtitleNotFound.
-	if req.BurnSubtitleID != "" {
-		burnDec, berr := escalateForBurn(req, detail, dec)
-		if berr != nil {
-			return Decision{}, Session{}, nil, nil, berr
-		}
-		dec = burnDec
+	mem := s.rememberedPicksFor(req.UserID, detail.ID)
+	dec, perr := s.applyPicks(req, detail, dec, mem)
+	if perr != nil {
+		return Decision{}, Session{}, nil, nil, perr
 	}
 
-	// Audio selection resolution order (audio-streams/05, ADR-0023):
-	//   Title memory → Show memory → preferredAudioLang → default disposition → first.
-	// An EXPLICIT audioStreamId (a viewer's pick, or a direct-play escalation) wins
-	// outright and is remembered afterward; otherwise Remembered audio re-resolves by
-	// MEANING against the chosen File's Streams and, when it matches, pins the audio
-	// exactly like an explicit pick — WITHOUT writing memory (passive resolution never
-	// writes). The tail of the order (preferredAudioLang → default → first) already
-	// lives in SelectEdition's pickAudioStream, so a no-memory / no-match session keeps
-	// the pre-05 Decision untouched.
-	explicitAudio := req.AudioStreamID != ""
-	audioID := req.AudioStreamID
-	if !explicitAudio {
-		// A remembered pick that resolves to the Stream the Decision already plays
-		// changes nothing: escalating would remux a File whose first track plays anyway
-		// just because that track carries no default disposition.
-		if rememberedID, ok := s.resolveRememberedAudio(req.UserID, detail, dec.File); ok && rememberedID != dec.AudioStream.ID {
-			audioID = rememberedID
-		}
-	}
-	if audioID != "" {
-		audioDec, aerr := escalateForAudio(req, detail, dec, audioID)
-		if aerr != nil {
-			// An explicit id that resolves to nothing is a hard 404 (hide existence). A
-			// memory-derived id always comes from the chosen File's own Streams, so it
-			// resolves — but if a race removed it, degrade to the default rather than error.
-			if explicitAudio {
-				return Decision{}, Session{}, nil, nil, aerr
-			}
-		} else {
-			dec = audioDec
-		}
-	}
-
-	// Video selection resolution order (selectable-video/04, ADR-0025, ADR-0023 mirrored):
-	//   Title memory → Show memory → capability-then-quality default (already resolved) →
-	//   is_default disposition → first Stream.
-	// An EXPLICIT videoStreamId (a viewer's pick) wins outright and is remembered
-	// afterward; otherwise Remembered video re-resolves by MEANING against the chosen
-	// File's video Streams and, when it matches, re-pins the video exactly like an
-	// explicit pick — WITHOUT writing memory (passive resolution never writes). No match
-	// (or no memory) leaves the Decision on its capability-then-quality default, unchanged
-	// from selectable-video/01. It runs AFTER the burn+audio escalations so the preserved
-	// audioStreamId, burnSubtitleId, and startPosition ride through unchanged — the switch
-	// is a full re-negotiation that only swaps the video and re-tiers. Direct play carries
-	// only the default video, so a non-default pick escalates (remux for a decodable
-	// Stream, a governed transcode for one the client can't decode); a pick equal to the
-	// resolved default is a no-op.
-	explicitVideo := req.VideoStreamID != ""
-	videoID := req.VideoStreamID
-	if !explicitVideo {
-		if rememberedID, ok := s.resolveRememberedVideo(req.UserID, detail, dec.File); ok {
-			videoID = rememberedID
-		}
-	}
-	if videoID != "" {
-		videoDec, verr := escalateForVideo(req, detail, dec, videoID)
-		if verr != nil {
-			// An explicit id that resolves to nothing is a hard 404 (hide existence). A
-			// memory-derived id always comes from the chosen File's own Streams, so it
-			// resolves — but if a race removed it, degrade to the default rather than error.
-			if explicitVideo {
-				return Decision{}, Session{}, nil, nil, verr
-			}
-		} else {
-			dec = videoDec
-		}
-	}
-
-	// Lean single-track remux (PRD remux-selected): when the client asked to drop every
-	// a/v Stream but the resolved pair AND the Decision would otherwise direct-play,
-	// escalate to a copy-only directStream pinned to just the resolved video + audio. It
-	// runs LAST of the escalations — after the burn/audio/video resolution above — so it
-	// trims to the FINAL selected Streams, and no-ops when any of those already forced a
-	// directStream/transcode (already lean or re-encoded). Copy-only, so it never
-	// consumes a transcode cap slot; a directStream is unmetered in CreateGoverned below.
-	if req.RemuxSelectedOnly {
-		dec = applyRemuxSelectedOnly(req.Profile, req.Constraints, dec)
-	}
-
-	// A video-copy transcode (ADR-0024) copies the source video and transcodes only
-	// the audio — mark it so the session runs UNMETERED with an ffmpeg-owned playlist
-	// (like remux: a copied stream has no forced-keyframe grid), rather than the
-	// synthesized-playlist video-transcode path. Computed from the same plan the args
-	// builder uses, so the two agree. Only a video-bearing, non-burn transcode qualifies.
-	if dec.Tier == TierTranscode && !dec.AudioOnly && dec.Burn == nil {
-		dec.VideoCopy = planVideoFor(req.Profile, req.Constraints, dec).Copy
-	}
 	// Stamp the client's HLS segment-container capability onto the Decision so every
 	// downstream UsesFMP4() consumer (session runtime, args builders, master CODECS)
 	// routes a copied HEVC to the container this client actually plays: MPEG-TS for
@@ -579,6 +505,10 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// after every escalation has settled so the flag rides the Decision that is
 	// actually delivered. The Session copies it in CreateGoverned.
 	dec.UserCeiling = ceilingBound
+	// The Step-down ladder (ADR-0071): every rung this client may play, the one this
+	// decision delivers marked current, computed from the final Decision so no rung
+	// exceeds the User's Playback ceiling.
+	dec.StepDown = s.stepDownFor(req, asked, detail, dec, mem)
 
 	// A video COPY / REMUX serves a SERVER-SYNTHESIZED media playlist computed from the
 	// source's keyframes, because ffmpeg writes its own copy playlist only when the
@@ -593,7 +523,7 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// authoritative) so a refused play does not pay for the probes below. The
 	// transcode cap needs no such pre-check: only a video-ENCODING transcode is
 	// metered, and that tier runs neither probe.
-	if err := s.sessions.CheckStreamLimit(req.UserID, req.Scope.MaxStreams); err != nil {
+	if err := s.sessions.CheckStreamLimitReplacing(req.UserID, req.DeviceID, req.Scope.MaxStreams, req.ReplacesSessionID); err != nil {
 		return Decision{}, Session{}, nil, nil, err
 	}
 	var boundaries []float64
@@ -616,6 +546,7 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 		DeviceID:                req.DeviceID,
 		TitleID:                 req.TitleID,
 		StartPosition:           req.StartPosition,
+		ReplacesSessionID:       req.ReplacesSessionID,
 		BuildHLSArgs:            hlsArgs,
 		BuildHLSArgsCPU:         cpuFallback,
 		BuildAudioRenditionArgs: audioRendition,
@@ -646,13 +577,13 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// bubble-up default. Passive default/memory resolution never writes. A memory
 	// write is best-effort: the session already exists, so a store hiccup must not
 	// fail the playback the client is about to start.
-	if explicitAudio {
+	if req.AudioStreamID != "" {
 		s.rememberAudioPick(req.UserID, req.TitleID, dec.AudioStream)
 	}
 	// Only an EXPLICIT pick writes Remembered video (ADR-0025): the resolved video Stream
 	// becomes the Title's memory and — for an Episode — the Show's bubble-up. Passive
 	// default/memory resolution never writes. Best-effort, like the audio write.
-	if explicitVideo {
+	if req.VideoStreamID != "" {
 		s.rememberVideoPick(req.UserID, req.TitleID, dec.VideoStream)
 	}
 	if s.onPlay != nil {
@@ -661,30 +592,92 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	return dec, sess, nil, nil, nil
 }
 
+// rememberedPicks holds the Remembered audio and video values of one negotiation, loaded
+// from the store at most once each and only when a pick needs them (ADR-0023, ADR-0025).
+// Negotiate makes one and hands it to applyPicks for the play and for every candidate rung
+// of the Step-down ladder, so a rung is matched against memory exactly as the play is and
+// the store is read no more often than the play alone would. A nil *rememberedPicks is "no
+// memory". Store reads are best-effort: an error degrades to "no memory", never blocks
+// playback. Not safe for concurrent use; one negotiation owns it.
+type rememberedPicks struct {
+	audioTitle, audioShow lazyMemory[store.RememberedAudio]
+	videoTitle, videoShow lazyMemory[store.RememberedVideo]
+}
+
+// lazyMemory is one level of Remembered memory, read on first use.
+type lazyMemory[T any] struct {
+	load func() (T, bool)
+	done bool
+	val  T
+	ok   bool
+}
+
+func (l *lazyMemory[T]) get() (T, bool) {
+	if !l.done {
+		l.done = true
+		if l.load != nil {
+			l.val, l.ok = l.load()
+		}
+	}
+	return l.val, l.ok
+}
+
+// rememberedPicksFor wires the per-Title and per-Show memory loaders for one Title. No
+// store is read here.
+func (s *Service) rememberedPicksFor(userID, titleID string) *rememberedPicks {
+	m := &rememberedPicks{}
+	if am := s.audioMem; am != nil {
+		m.audioTitle.load = func() (store.RememberedAudio, bool) {
+			mem, found, err := am.RememberedAudioForTitle(userID, titleID)
+			return mem, err == nil && found
+		}
+		// The Show's bubble-up default for an Episode without its own pick. A Movie has no
+		// Show, so ShowIDForTitle reports found=false and this level is empty.
+		m.audioShow.load = func() (store.RememberedAudio, bool) {
+			showID, ok, err := am.ShowIDForTitle(titleID)
+			if err != nil || !ok {
+				return store.RememberedAudio{}, false
+			}
+			mem, found, err := am.RememberedAudioForShow(userID, showID)
+			return mem, err == nil && found
+		}
+	}
+	if vm := s.videoMem; vm != nil {
+		m.videoTitle.load = func() (store.RememberedVideo, bool) {
+			mem, found, err := vm.RememberedVideoForTitle(userID, titleID)
+			return mem, err == nil && found
+		}
+		m.videoShow.load = func() (store.RememberedVideo, bool) {
+			showID, ok, err := vm.ShowIDForTitle(titleID)
+			if err != nil || !ok {
+				return store.RememberedVideo{}, false
+			}
+			mem, found, err := vm.RememberedVideoForShow(userID, showID)
+			return mem, err == nil && found
+		}
+	}
+	return m
+}
+
 // resolveRememberedAudio applies the Remembered-audio half of the resolution order
 // (ADR-0023): the Title's pick first, then the Show's bubble-up, each re-resolved by
-// MEANING against the chosen File's current audio Streams (exact-trait → language).
-// It returns the resolved Stream's id and ok=true on the first level that matches;
-// ok=false when memory is disabled, absent, or matches nothing — the caller then
-// leaves the Decision on its preferredAudioLang → default → first resolution. Store
-// reads are best-effort: an error degrades to "no memory", never blocks playback.
-func (s *Service) resolveRememberedAudio(userID string, detail store.TitleDetail, f store.File) (string, bool) {
-	if s.audioMem == nil {
+// MEANING against the given File's current audio Streams (exact-trait → language). It
+// returns the resolved Stream's id and ok=true on the first level that matches; ok=false
+// when memory is absent or matches nothing — the caller then leaves the Decision on its
+// preferredAudioLang → default → first resolution. It touches the store only through the
+// loaded memory, so it is the same for the play and for every rung.
+func (m *rememberedPicks) resolveRememberedAudio(f store.File) (string, bool) {
+	if m == nil {
 		return "", false
 	}
-	// Title memory.
-	if mem, found, err := s.audioMem.RememberedAudioForTitle(userID, detail.ID); err == nil && found {
+	if mem, found := m.audioTitle.get(); found {
 		if stream, ok := resolveRememberedAudioStream(f.Streams, mem); ok {
 			return stream.ID, true
 		}
 	}
-	// Show memory (the bubble-up default for an Episode without its own pick). A Movie
-	// has no Show, so ShowIDForTitle reports found=false and this level is skipped.
-	if showID, ok, err := s.audioMem.ShowIDForTitle(detail.ID); err == nil && ok {
-		if mem, found, err := s.audioMem.RememberedAudioForShow(userID, showID); err == nil && found {
-			if stream, ok := resolveRememberedAudioStream(f.Streams, mem); ok {
-				return stream.ID, true
-			}
+	if mem, found := m.audioShow.get(); found {
+		if stream, ok := resolveRememberedAudioStream(f.Streams, mem); ok {
+			return stream.ID, true
 		}
 	}
 	return "", false
@@ -720,29 +713,23 @@ func (s *Service) rememberAudioPick(userID, titleID string, chosen store.Stream)
 
 // resolveRememberedVideo applies the Remembered-video half of the resolution order
 // (ADR-0025, ADR-0023 mirrored): the Title's pick first, then the Show's bubble-up, each
-// re-resolved by MEANING against the chosen File's current video Streams (exact-trait →
+// re-resolved by MEANING against the given File's current video Streams (exact-trait →
 // label). It returns the resolved Stream's id and ok=true on the first level that
-// matches; ok=false when memory is disabled, absent, or matches nothing — the caller
-// then leaves the Decision on its capability-then-quality default. Store reads are
-// best-effort: an error degrades to "no memory", never blocks playback. The direct video
-// mirror of resolveRememberedAudio.
-func (s *Service) resolveRememberedVideo(userID string, detail store.TitleDetail, f store.File) (string, bool) {
-	if s.videoMem == nil {
+// matches; ok=false when memory is absent or matches nothing — the caller then leaves the
+// Decision on its capability-then-quality default. The direct video mirror of
+// resolveRememberedAudio.
+func (m *rememberedPicks) resolveRememberedVideo(f store.File) (string, bool) {
+	if m == nil {
 		return "", false
 	}
-	// Title memory.
-	if mem, found, err := s.videoMem.RememberedVideoForTitle(userID, detail.ID); err == nil && found {
+	if mem, found := m.videoTitle.get(); found {
 		if stream, ok := resolveRememberedVideoStream(f.Streams, mem); ok {
 			return stream.ID, true
 		}
 	}
-	// Show memory (the bubble-up default for an Episode without its own pick). A Movie
-	// has no Show, so ShowIDForTitle reports found=false and this level is skipped.
-	if showID, ok, err := s.videoMem.ShowIDForTitle(detail.ID); err == nil && ok {
-		if mem, found, err := s.videoMem.RememberedVideoForShow(userID, showID); err == nil && found {
-			if stream, ok := resolveRememberedVideoStream(f.Streams, mem); ok {
-				return stream.ID, true
-			}
+	if mem, found := m.videoShow.get(); found {
+		if stream, ok := resolveRememberedVideoStream(f.Streams, mem); ok {
+			return stream.ID, true
 		}
 	}
 	return "", false
@@ -767,6 +754,117 @@ func (s *Service) rememberVideoPick(userID, titleID string, chosen store.Stream)
 	if showID, ok, err := s.videoMem.ShowIDForTitle(titleID); err == nil && ok {
 		_ = s.videoMem.SaveRememberedVideoForShow(userID, showID, mem)
 	}
+}
+
+// applyPicks carries a Decision through the request's stream picks, in the order they
+// compose: a burn, an audio pick, a video pick, remux-selected, and the video-copy mark.
+// Negotiate runs it for the play; the Step-down ladder runs it for every candidate rung,
+// so a rung is planned exactly as a request for it would be. mem is the negotiation's
+// loaded Remembered audio/video memory, matched against each Decision's own File; the
+// explicit ids always win over it.
+func (s *Service) applyPicks(req Request, detail store.TitleDetail, dec Decision, mem *rememberedPicks) (Decision, error) {
+	// Image-subtitle burn-in escalation (ADR-0020, subtitles/04): a burnSubtitleId
+	// that resolves to an image track FORCES the transcode tier with the subtitle
+	// burned into the frames — even if the File would otherwise direct-play or remux.
+	// A text/unknown id has no image sub to burn, so it is ErrBurnSubtitleNotFound.
+	if req.BurnSubtitleID != "" {
+		burnDec, berr := escalateForBurn(req, detail, dec)
+		if berr != nil {
+			return Decision{}, berr
+		}
+		dec = burnDec
+	}
+
+	// Audio selection resolution order (audio-streams/05, ADR-0023):
+	//   Title memory → Show memory → preferredAudioLang → default disposition → first.
+	// An EXPLICIT audioStreamId (a viewer's pick, or a direct-play escalation) wins
+	// outright and is remembered afterward; otherwise Remembered audio re-resolves by
+	// MEANING against the chosen File's Streams and, when it matches, pins the audio
+	// exactly like an explicit pick — WITHOUT writing memory (passive resolution never
+	// writes). The tail of the order (preferredAudioLang → default → first) already
+	// lives in SelectEdition's pickAudioStream, so a no-memory / no-match session keeps
+	// the pre-05 Decision untouched.
+	explicitAudio := req.AudioStreamID != ""
+	audioID := req.AudioStreamID
+	if !explicitAudio {
+		// A remembered pick that resolves to the Stream the Decision already plays
+		// changes nothing: escalating would remux a File whose first track plays anyway
+		// just because that track carries no default disposition.
+		if rememberedID, ok := mem.resolveRememberedAudio(dec.File); ok && rememberedID != dec.AudioStream.ID {
+			audioID = rememberedID
+		}
+	}
+	if audioID != "" {
+		audioDec, aerr := escalateForAudio(req, detail, dec, audioID)
+		if aerr != nil {
+			// An explicit id that resolves to nothing is a hard 404 (hide existence). A
+			// memory-derived id always comes from the chosen File's own Streams, so it
+			// resolves — but if a race removed it, degrade to the default rather than error.
+			if explicitAudio {
+				return Decision{}, aerr
+			}
+		} else {
+			dec = audioDec
+		}
+	}
+
+	// Video selection resolution order (selectable-video/04, ADR-0025, ADR-0023 mirrored):
+	//   Title memory → Show memory → capability-then-quality default (already resolved) →
+	//   is_default disposition → first Stream.
+	// An EXPLICIT videoStreamId (a viewer's pick) wins outright and is remembered
+	// afterward; otherwise Remembered video re-resolves by MEANING against the chosen
+	// File's video Streams and, when it matches, re-pins the video exactly like an
+	// explicit pick — WITHOUT writing memory (passive resolution never writes). No match
+	// (or no memory) leaves the Decision on its capability-then-quality default, unchanged
+	// from selectable-video/01. It runs AFTER the burn+audio escalations so the preserved
+	// audioStreamId, burnSubtitleId, and startPosition ride through unchanged — the switch
+	// is a full re-negotiation that only swaps the video and re-tiers. Direct play carries
+	// only the default video, so a non-default pick escalates (remux for a decodable
+	// Stream, a governed transcode for one the client can't decode); a pick equal to the
+	// resolved default is a no-op.
+	explicitVideo := req.VideoStreamID != ""
+	videoID := req.VideoStreamID
+	if !explicitVideo {
+		if rememberedID, ok := mem.resolveRememberedVideo(dec.File); ok {
+			videoID = rememberedID
+		}
+	}
+	if videoID != "" {
+		videoDec, verr := escalateForVideo(req, detail, dec, videoID)
+		if verr != nil {
+			// An explicit id that resolves to nothing is a hard 404 (hide existence). A
+			// memory-derived id always comes from the chosen File's own Streams, so it
+			// resolves — but if a race removed it, degrade to the default rather than error.
+			if explicitVideo {
+				return Decision{}, verr
+			}
+		} else {
+			dec = videoDec
+		}
+	}
+
+	// Lean single-track remux (PRD remux-selected): when the client asked to drop every
+	// a/v Stream but the resolved pair AND the Decision would otherwise direct-play,
+	// escalate to a copy-only directStream pinned to just the resolved video + audio. It
+	// runs LAST of the escalations — after the burn/audio/video resolution above — so it
+	// trims to the FINAL selected Streams, and no-ops when any of those already forced a
+	// directStream/transcode (already lean or re-encoded). Copy-only, so it never
+	// consumes a transcode cap slot; a directStream is unmetered in CreateGoverned below.
+	if req.RemuxSelectedOnly {
+		dec = applyRemuxSelectedOnly(req.Profile, req.Constraints, dec)
+	}
+
+	// A video-copy transcode (ADR-0024) copies the source video and transcodes only
+	// the audio — mark it so the session runs UNMETERED with an ffmpeg-owned playlist
+	// (like remux: a copied stream has no forced-keyframe grid), rather than the
+	// synthesized-playlist video-transcode path. Computed from the same plan the args
+	// builder uses, so the two agree. Only a video-bearing, non-burn transcode qualifies.
+	// A remux of a multi-part Edition whose later parts fail the checks is an encode.
+	dec = encodeForParts(req.Profile, req.Constraints, dec)
+	if dec.Tier == TierTranscode && !dec.AudioOnly && dec.Burn == nil {
+		dec.VideoCopy = planVideoFor(req.Profile, req.Constraints, dec).Copy
+	}
+	return dec, nil
 }
 
 // escalateForBurn rebuilds a Decision as a TRANSCODE with the requested image
@@ -1374,6 +1472,19 @@ func planVideoFor(profile DeviceProfile, constraints Constraints, dec Decision) 
 	// ceiling (we always output h264 when re-encoding). minPositive treats 0 as "no cap".
 	copyMaxHeight := minPositive(resolutionHeight(constraints.MaxResolution), resolutionHeight(srcSupport.MaxResolution))
 	reencodeMaxHeight := reencodeCapHeight(profile, constraints)
+	// A multi-part Edition is read through the concat demuxer, so a later part's track
+	// at the mapped index may differ from the one judged above. When any part fails the
+	// checks the video is ENCODED, never copied, and scaled to the User's ceiling and the
+	// profile's h264 cap: the scale filter runs on the joined stream, so it covers every
+	// part (it never upscales).
+	if !partsApproved(profile, constraints, dec) {
+		plan := transcode.PlanVideo(srcVideoCodec, srcHeight, f.Bitrate, false, copyMaxHeight, reencodeMaxHeight, constraints.MaxBitrate)
+		// Part 1's own height is a cap too: the hardware scale filters take a fixed
+		// height (-2:H) and would UPSCALE a shorter part 1 to the ceiling. Later parts
+		// follow part 1's size, as on the CPU path.
+		plan.MaxHeight = minPositive(minPositive(reencodeMaxHeight, resolutionHeight(constraints.CeilingResolution)), srcHeight)
+		return plan
+	}
 	return transcode.PlanVideo(srcVideoCodec, srcHeight, f.Bitrate, clientSupportsSource, copyMaxHeight, reencodeMaxHeight, constraints.MaxBitrate)
 }
 
@@ -1424,17 +1535,36 @@ func transcodeJobPlan(profile DeviceProfile, constraints Constraints, dec Decisi
 	// TranscodeArgs to drop the video stream (-vn) entirely.
 	if dec.AudioOnly {
 		srcAudioCodec := firstNonEmpty(dec.AudioStream.Codec, f.AudioCodec)
+		audio := transcode.PlanAudio(
+			srcAudioCodec,
+			effectiveAudioChannels(dec),
+			profile.supportsAudio(transcode.AudioCodecAAC),
+			profile.MaxAudioChannels,
+		)
+		// A bitrate cap holds the AAC output to it (the Step-down ladder's 256k/128k
+		// music rungs, ADR-0071): a source over the cap, or of unknown bitrate (which
+		// cannot be shown to fit), is re-encoded rather than copied, and an encode under a
+		// cap AAC can honour carries -b:a. Only an audio-scale cap forces the encode of a
+		// source of unknown bitrate.
+		if c := constraints.MaxBitrate; c > 0 && (f.Bitrate > c || f.Bitrate == 0 && audioScaleCap(c)) {
+			audio.Copy = false
+		}
+		if !audio.Copy {
+			ch := audio.SourceChannels
+			if audio.MaxChannels > 0 && audio.MaxChannels < ch {
+				ch = audio.MaxChannels
+			}
+			// No cap (or one the encoder's default already honours) encodes at the
+			// uncapped audio-only target, so the unconstrained rung is the 256k one; the
+			// source's own bitrate is never exceeded.
+			audio.MaxBitrate = audioEncodeTarget(constraints.MaxBitrate, ch, f.Bitrate)
+		}
 		return transcode.TranscodeJob{
 			SourcePath:       f.Path,
 			AudioOnly:        true,
 			HasAudio:         true,
 			AudioStreamIndex: audioMapIndex(f, dec.AudioStream),
-			Audio: transcode.PlanAudio(
-				srcAudioCodec,
-				effectiveAudioChannels(dec),
-				profile.supportsAudio(transcode.AudioCodecAAC),
-				profile.MaxAudioChannels,
-			),
+			Audio:            audio,
 		}
 	}
 
