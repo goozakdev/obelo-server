@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/audio"
+	"github.com/goozakdev/obelo-server/internal/auth"
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -47,7 +48,16 @@ type playbackRequest struct {
 	DeviceProfile *deviceProfileJSON `json:"deviceProfile"`
 	Constraints   *constraintsJSON   `json:"constraints"`
 	StartPosition int64              `json:"startPosition"`
-	EditionID     string             `json:"editionId"`
+	// ReplacesSessionID names the caller's own live session this negotiation
+	// supersedes (ADR-0071 §5). The swap is atomic with the stream-limit and
+	// transcode-cap checks; the old session ends after a short grace period or on its
+	// own DELETE. An unknown, expired or foreign id is treated as absent.
+	ReplacesSessionID string `json:"replacesSessionId"`
+	// CeilingResolution is the home Server's User's resolution ceiling on a relayed
+	// negotiation (features.relayCeiling, server to server). Honoured only from a
+	// linked Server's credential; a client's copy is ignored.
+	CeilingResolution string `json:"ceilingResolution"`
+	EditionID         string `json:"editionId"`
 	// BurnSubtitleID selects an IMAGE Subtitle track to burn into the video frames
 	// (ADR-0020, subtitles/04). It escalates the decision to the transcode tier
 	// (which is governed and can return 503 SERVER_BUSY) with the sub burned in. The
@@ -251,6 +261,44 @@ type decisionResponse struct {
 	// SeekPreviews is the File's Seek preview manifest (ADR-0070), OMITTED entirely
 	// when the File has none. A pointer so omitempty applies.
 	SeekPreviews *seekPreviewsJSON `json:"seekPreviews,omitempty"`
+	// StepDown is the Step-down ladder (ADR-0071): every rung this client may play,
+	// best first, one marked current. Never null; empty only for a relayed decision
+	// whose sharer sent none.
+	StepDown []stepRungJSON `json:"stepDown"`
+}
+
+// stepRungJSON is one Step-down rung. An Edition rung carries editionId; a Transcode
+// rung carries constraints; a client requesting a rung sends exactly those, replacing
+// its own.
+type stepRungJSON struct {
+	Label       string               `json:"label"`
+	Kind        string               `json:"kind"`
+	EditionID   string               `json:"editionId,omitempty"`
+	Constraints *stepConstraintsJSON `json:"constraints,omitempty"`
+	// Bitrate is the rung's estimated delivered bitrate in bits/sec; omitted when unknown.
+	Bitrate int64 `json:"bitrate,omitempty"`
+	// Height is the delivered video height in pixels; omitted when unknown and for music.
+	Height int `json:"height,omitempty"`
+	// Current marks the one rung this decision delivers; omitted on the others.
+	Current bool `json:"current,omitempty"`
+}
+
+type stepConstraintsJSON struct {
+	MaxResolution string `json:"maxResolution,omitempty"`
+	MaxBitrate    int64  `json:"maxBitrate,omitempty"`
+}
+
+// toStepDown maps the domain ladder onto the wire; always non-nil so it is a `[]`.
+func toStepDown(rungs []playback.StepRung) []stepRungJSON {
+	out := make([]stepRungJSON, 0, len(rungs))
+	for _, r := range rungs {
+		j := stepRungJSON{Label: r.Label, Kind: r.Kind, EditionID: r.EditionID, Bitrate: r.Bitrate, Height: r.Height, Current: r.Current}
+		if r.MaxResolution != "" || r.MaxBitrate > 0 {
+			j.Constraints = &stepConstraintsJSON{MaxResolution: r.MaxResolution, MaxBitrate: r.MaxBitrate}
+		}
+		out = append(out, j)
+	}
+	return out
 }
 
 // --- handlers ---------------------------------------------------------------
@@ -607,6 +655,14 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// The ceiling a linked home Server forwards is honoured only from a linked
+		// Server's own credential (the `remote` User); anyone else's copy is ignored, so
+		// a client can never set its own ceiling this way.
+		ceilingResolution := ""
+		if id.User.Role == auth.RoleRemote {
+			ceilingResolution = req.CeilingResolution
+		}
+
 		dec, sess, unsup, busy, err := svc.Negotiate(playback.Request{
 			UserID:            id.User.ID,
 			DeviceID:          id.Device.ID,
@@ -614,6 +670,8 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			Profile:           req.DeviceProfile.toDomain(),
 			Constraints:       req.Constraints.toDomain(),
 			StartPosition:     req.StartPosition,
+			ReplacesSessionID: req.ReplacesSessionID,
+			CeilingResolution: ceilingResolution,
 			EditionID:         req.EditionID,
 			BurnSubtitleID:    req.BurnSubtitleID,
 			AudioStreamID:     req.AudioStreamID,
@@ -780,6 +838,7 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSu
 		VideoStreams:     toVideoStreams(d.File.Streams, d.VideoStream.ID),
 		Subtitles:        toDecisionSubtitles(titleID, d.Subtitles, clientSubtitleFormats),
 		EstimatedBitrate: d.EstimatedBitrate,
+		StepDown:         toStepDown(d.StepDown),
 	}
 	// A video Stream is present for every Movie/Episode; omit it for an audio-only
 	// Decision (a Track, or a File whose only video is cover art) so the response
@@ -1100,7 +1159,8 @@ func handleMintStreamToken(deps Deps, sessionID string) http.HandlerFunc {
 // so the client can seek. http.ServeContent handles Range, 206 Partial Content,
 // If-Range, and HEAD correctly, mapping a seek to a byte offset — no new playback
 // decision is needed for seeking (ADR-0004). Only the session's owner may stream
-// it; another User (or an unknown/ended session id) gets 404 (hide existence).
+// it, and only while its tier is directPlay; another User, an unknown/ended session
+// id, or any other tier gets 404 (hide existence).
 func handleSessionStream(svc *playback.Service, sessionID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := identityFrom(r.Context())
@@ -1111,6 +1171,13 @@ func handleSessionStream(svc *playback.Service, sessionID string) http.HandlerFu
 		sess, ok := svc.Sessions().Get(sessionID)
 		if !ok || sess.UserID != id.User.ID {
 			// Unknown, ended, or not-yours: hide existence with a 404.
+			writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)
+			return
+		}
+		if sess.Tier != playback.TierDirectPlay {
+			// The raw File is only what a directPlay session is entitled to: a remux or
+			// transcode session may hold a video track the Playback ceiling refused.
+			// Same 404 as above so the tier is not an oracle either.
 			writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)
 			return
 		}

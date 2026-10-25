@@ -85,6 +85,11 @@ type Service struct {
 	mu       sync.Mutex
 	attached *Syncer
 
+	// stepDownProbes caches each Link's sharer's answer about features.stepDown and features.relayCeiling
+	// (relay.go), under probeMu.
+	probeMu        sync.Mutex
+	stepDownProbes map[string]stepDownProbe
+
 	// version is the link-protocol version this build speaks. Injected rather than
 	// read from the server package at each use so a test can put the two sides on
 	// different versions without rebuilding either.

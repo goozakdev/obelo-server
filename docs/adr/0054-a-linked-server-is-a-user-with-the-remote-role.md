@@ -76,6 +76,8 @@ or anything else about who in that household is watching crosses the wire. The s
 legitimate interests are load and content; both are served. `max_streams` exists precisely so
 they do not need a third one.
 
+*Amended (directplay-ceiling-bypass): a relayed negotiate also carries `ceilingResolution` — the home User's resolution ceiling, a resolution token and not a person — which a sharer advertising `features.relayCeiling` applies as its own ceiling for that play (api-contract §3.11).*
+
 **4. A linked Library is never grantable to a `remote` User.** A Library the sharer itself
 mirrored from somebody else (ADR-0056) cannot be placed in a `remote` User's grant set: the
 replace-set rejects it (`LINKED_GRANT`), the export endpoint refuses to serve it, and the Users

@@ -26,6 +26,7 @@ import "github.com/goozakdev/obelo-server/internal/access"
 func clampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
 	bound := false
 	if ceiling := resolutionHeight(s.MaxResolution); ceiling > 0 {
+		c.CeilingResolution = s.MaxResolution
 		if asked := resolutionHeight(c.MaxResolution); asked == 0 || ceiling < asked {
 			c.MaxResolution = s.MaxResolution
 			bound = true
@@ -36,6 +37,21 @@ func clampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
 		bound = true
 	}
 	return c, bound
+}
+
+// lowerResolutionCeiling is the effective resolution ceiling when a linked home Server
+// forwards its User's (features.relayCeiling): the stricter of the Scope's own and the
+// forwarded token, so it can lower a ceiling and never raise one. An unreadable
+// forwarded token is no opinion, like an unrecognized Scope token.
+func lowerResolutionCeiling(scope, forwarded string) string {
+	f := resolutionHeight(forwarded)
+	if f == 0 {
+		return scope
+	}
+	if s := resolutionHeight(scope); s == 0 || f < s {
+		return forwarded
+	}
+	return scope
 }
 
 // ClampToCeiling is clampToCeiling for a caller outside this package: an Online

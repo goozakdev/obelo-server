@@ -642,6 +642,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		MaxConcurrentTranscodes: cfg.MaxConcurrentTranscodes,
 		Accel:                   backendResolution.Accel,
 	})
+	// The Step-down ladder offers Transcode rungs only where this host can transcode
+	// (ADR-0071), the same fact the handshake advertises as features.transcode.
+	playbackSvc.SetCanTranscode(ffmpegAvailability.Available)
 	// Marker detection (ADR-0065 §4): queued after a scan and by an Admin's
 	// "detect markers now", one Season at a time. It never starts while ffmpeg
 	// re-encodes anything on this host — cap-exempt video copies, audio-only

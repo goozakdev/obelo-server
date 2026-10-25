@@ -149,7 +149,22 @@ func (s *Service) RelayNegotiate(ctx context.Context, req playback.RelayRequest)
 	if err != nil {
 		return playback.RelayAnswer{}, ErrNotRelayed
 	}
-	body := relayNegotiationBody(req, relayRemoteID(rs, store.ExportEdition, req.EditionID),
+	// A sharer without step-down rejects the unknown field with a 400, so the
+	// replacement is forwarded only if its handshake says it understands it. The local
+	// replacement happens either way.
+	// The same goes for ceilingResolution (features.relayCeiling). A sharer without it
+	// is not sent the ceiling, and the playback Service re-asks it instead.
+	ceiling := ""
+	if req.ReplacesSessionID != "" || req.Constraints.CeilingResolution != "" {
+		stepDown, relayCeiling := s.sharerFeatures(ctx, &l)
+		if req.ReplacesSessionID != "" && !stepDown {
+			req.ReplacesSessionID = ""
+		}
+		if relayCeiling {
+			ceiling = req.Constraints.CeilingResolution
+		}
+	}
+	body := relayNegotiationBody(req, ceiling, relayRemoteID(rs, store.ExportEdition, req.EditionID),
 		relayRemoteID(rs, store.ExportStream, req.AudioStreamID),
 		relayRemoteID(rs, store.ExportStream, req.VideoStreamID))
 
@@ -160,8 +175,69 @@ func (s *Service) RelayNegotiate(ctx context.Context, req playback.RelayRequest)
 		return playback.RelayAnswer{}, err
 	}
 	answer.LinkID = l.ID
+	answer.CeilingForwarded = ceiling != ""
 	answer.RemoteTitleID = remoteTitle
 	return answer, nil
+}
+
+// stepDownProbeTTL is how long a sharer's answer about features.stepDown and
+// features.relayCeiling is reused, whichever way it went: a step costs no extra round
+// trip, and a sharer that could not be read is not asked again for every step of a
+// degrading network.
+const stepDownProbeTTL = 5 * time.Minute
+
+// stepDownProbe is one cached answer about a Link's sharer.
+type stepDownProbe struct {
+	stepDown     bool
+	relayCeiling bool
+	at           time.Time
+}
+
+// sharerHasStepDown reads the sharer's handshake for features.stepDown.
+func (s *Service) sharerHasStepDown(ctx context.Context, l *store.Link) bool {
+	stepDown, _ := s.sharerFeatures(ctx, l)
+	return stepDown
+}
+
+// sharerFeatures reads the sharer's handshake for features.stepDown and
+// features.relayCeiling in one fetch, trying the Link's origins in order the way a
+// negotiation does: the one that answers becomes the Link's active origin, so the
+// negotiation that follows goes straight to it instead of trying a dead one again. A
+// sharer that cannot be read is treated as lacking both: the
+// negotiation that follows then fails or succeeds without the fields. The answer is
+// cached per Link for stepDownProbeTTL.
+func (s *Service) sharerFeatures(ctx context.Context, l *store.Link) (stepDown, relayCeiling bool) {
+	s.probeMu.Lock()
+	cached, ok := s.stepDownProbes[l.ID]
+	s.probeMu.Unlock()
+	if ok && s.now().Sub(cached.at) < stepDownProbeTTL {
+		return cached.stepDown, cached.relayCeiling
+	}
+	client := s.client()
+	for _, origin := range originsFor(*l) {
+		pctx, cancel := context.WithTimeout(ctx, s.callTimeout())
+		peer, err := s.probe(pctx, client, origin)
+		cancel()
+		if err != nil || peer.ID != l.ServerID {
+			continue
+		}
+		stepDown, relayCeiling = peer.StepDown, peer.RelayCeiling
+		if origin != l.ActiveOrigin {
+			if serr := s.store.SetLinkActiveOrigin(l.ID, origin); serr != nil {
+				log.Printf("obelo: link: recording the address of %q: %v", l.ServerName, serr)
+			} else {
+				l.ActiveOrigin = origin
+			}
+		}
+		break
+	}
+	s.probeMu.Lock()
+	if s.stepDownProbes == nil {
+		s.stepDownProbes = map[string]stepDownProbe{}
+	}
+	s.stepDownProbes[l.ID] = stepDownProbe{stepDown: stepDown, relayCeiling: relayCeiling, at: s.now()}
+	s.probeMu.Unlock()
+	return stepDown, relayCeiling
 }
 
 // relayRemoteID maps one optional local id onto the sharer's, dropping it when
@@ -188,7 +264,7 @@ func relayRemoteID(rs RelayStore, kind, localID string) string {
 // another household about a play, and the answer must be readable in one screen.
 // Everything here came from the client's own Capability profile; NOTHING here
 // identifies the person watching (ADR-0054 §3).
-func relayNegotiationBody(req playback.RelayRequest, editionID, audioID, videoID string) map[string]any {
+func relayNegotiationBody(req playback.RelayRequest, ceiling, editionID, audioID, videoID string) map[string]any {
 	codecs := make([]map[string]any, 0, len(req.Profile.VideoCodecs))
 	for _, c := range req.Profile.VideoCodecs {
 		codecs = append(codecs, map[string]any{
@@ -198,7 +274,7 @@ func relayNegotiationBody(req playback.RelayRequest, editionID, audioID, videoID
 			"hdr":           c.HDR,
 		})
 	}
-	return map[string]any{
+	body := map[string]any{
 		"deviceProfile": map[string]any{
 			"containers":          req.Profile.Containers,
 			"videoCodecs":         codecs,
@@ -220,6 +296,15 @@ func relayNegotiationBody(req playback.RelayRequest, editionID, audioID, videoID
 		"videoStreamId":     videoID,
 		"remuxSelectedOnly": req.RemuxSelectedOnly,
 	}
+	if req.ReplacesSessionID != "" {
+		body["replacesSessionId"] = req.ReplacesSessionID
+	}
+	// The home User's Playback ceiling, for the sharer to apply as its own for this
+	// negotiation (features.relayCeiling). It names a resolution, never a person.
+	if ceiling != "" {
+		body["ceilingResolution"] = ceiling
+	}
+	return body
 }
 
 // postNegotiation spends one negotiation against whichever address answers.

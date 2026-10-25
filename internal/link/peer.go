@@ -35,9 +35,15 @@ const maxPeerBody = 1 << 20
 // Peer is what the handshake told us about the Server at an origin — the four
 // facts that decide whether linking to it can work at all (ADR-0055 §3).
 type Peer struct {
-	ID                  string
-	Name                string
-	ServerLinking       bool
+	ID            string
+	Name          string
+	ServerLinking bool
+	// StepDown is features.stepDown: the Server accepts replacesSessionId on a
+	// negotiation (ADR-0071).
+	StepDown bool
+	// RelayCeiling is features.relayCeiling: the Server accepts ceilingResolution on a
+	// relayed negotiation from a linked Server.
+	RelayCeiling        bool
 	LinkProtocolVersion int
 }
 
@@ -121,6 +127,8 @@ func (s *Service) probe(ctx context.Context, client *http.Client, origin string)
 		ID:                  body.ID,
 		Name:                body.Name,
 		ServerLinking:       body.Features["serverLinking"],
+		StepDown:            body.Features["stepDown"],
+		RelayCeiling:        body.Features["relayCeiling"],
 		LinkProtocolVersion: body.LinkProtocolVersion,
 	}, nil
 }

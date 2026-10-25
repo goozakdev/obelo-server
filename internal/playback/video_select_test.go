@@ -126,14 +126,14 @@ func TestNegotiateMultiVideoDefault(t *testing.T) {
 	ed := multiVideoDetail().Editions[0]
 	f := ed.Files[0]
 
-	// h264-only client: defaults to the 1080p H.264 and direct-plays it (not a
-	// transcode of the 4K HEVC).
+	// h264-only client: defaults to the 1080p H.264 and REMUXES it (not a transcode of
+	// the 4K HEVC, and not a direct play, which would play the HEVC container default).
 	dec, unsup := Negotiate(h264Profile(), Constraints{}, ed, f)
 	if unsup != nil {
 		t.Fatalf("h264 client unexpectedly unsupported: %v", unsup)
 	}
-	if dec.Tier != TierDirectPlay {
-		t.Errorf("tier = %q, want directPlay", dec.Tier)
+	if dec.Tier != TierDirectStream {
+		t.Errorf("tier = %q, want directStream", dec.Tier)
 	}
 	if dec.VideoStream.ID != "v-1080" || dec.VideoStream.Codec != "h264" {
 		t.Errorf("reported video = %q/%q, want v-1080/h264", dec.VideoStream.ID, dec.VideoStream.Codec)

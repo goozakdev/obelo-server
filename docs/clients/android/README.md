@@ -12,4 +12,6 @@ What differs, as far as the server is concerned:
   Stream token (`features.streamToken`, token in the URL path) and a narrow HLS capability profile.
 - It pins this repo's docs at `docs/backend/` in its own tree, refreshed by `make refresh-backend-docs`.
 
+Automatic step-down follows the shared client spec [`../step-down.md`](../step-down.md).
+
 The Android repo's `docs/spec.md` is the source of truth for its scope; this file is only a pointer.

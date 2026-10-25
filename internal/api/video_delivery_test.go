@@ -164,10 +164,10 @@ func TestVideoStreamIdUndecodableIsGovernedTranscode(t *testing.T) {
 	id := findTitle(t, listAllTitles(t, srv, token, libID), "Video Movie")
 
 	// Discover the ids from a baseline at the capped resolution: the default is now the
-	// shorter Black & White cut (direct play), Colour exceeds the cap.
+	// shorter Black & White cut (a remux of the non-default track), Colour exceeds the cap.
 	base := negotiateVideo(t, srv, token, id, withMaxResolution(mkvVideoProfile(), "144p"))
-	if base.Tier != "directPlay" {
-		t.Fatalf("capped baseline tier = %q, want directPlay (default is the short cut)", base.Tier)
+	if base.Tier != "directStream" {
+		t.Fatalf("capped baseline tier = %q, want directStream (the short cut is not the container default)", base.Tier)
 	}
 	col := videoStreamByLabel(t, base, "Colour")
 

@@ -2,6 +2,10 @@ package transcode
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -927,8 +931,8 @@ func TestRealignEncodeStaysADTSExpressible(t *testing.T) {
 		{2, 2},  // stereo
 		{6, 6},  // 5.1
 		{7, 6},  // 6.1 has NO ADTS configuration → nearest expressible
-		{8, 8},  // 7.1 is configuration 7
-		{10, 8}, // beyond the table → cap
+		{8, 6},  // 7.1: ffmpeg 9's -ac 8 is 7.1 = configuration 12, which ADTS refuses
+		{10, 6}, // beyond the table → cap
 	} {
 		if got := adtsExpressibleChannels(tc.in); got != tc.want {
 			t.Errorf("adtsExpressibleChannels(%d) = %d, want %d", tc.in, got, tc.want)
@@ -939,6 +943,10 @@ func TestRealignEncodeStaysADTSExpressible(t *testing.T) {
 	// and is the viewer's explicit choice.
 	if got := encodedAudioChannels(2, 7); got != 2 {
 		t.Errorf("encodedAudioChannels(max=2, src=7) = %d, want 2 (client cap wins)", got)
+	}
+	// A client cap above 6 is capped too: an 8-channel cap would otherwise reach -ac 8.
+	if got := encodedAudioChannels(8, 8); got != 6 {
+		t.Errorf("encodedAudioChannels(max=8, src=8) = %d, want 6", got)
 	}
 	// No cap and an already-expressible source → STILL emit the count. -ac is what
 	// pins the standard layout for that count; without it a 5.1(side) source encodes
@@ -971,6 +979,155 @@ func TestRealignEncodeStaysADTSExpressible(t *testing.T) {
 	})
 	if !hasPair(rem, "-ac", "6") {
 		t.Errorf("realigned 6.1 remux must cap to -ac 6; args: %v", rem)
+	}
+}
+
+// TestAudioRenditionEncodesEightChannelSource runs the real ffmpeg: an AAC encode of a
+// 7.1 source must still write its playlist and segments. ffmpeg 9 resolves `-ac 8` to
+// the 7.1 layout, which AAC signals as channel_configuration 12, and the ADTS muxer
+// refuses it ("channelConfiguration > 7 is not supported in ADTS") — writing nothing.
+func TestAudioRenditionEncodesEightChannelSource(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	gen := exec.Command("ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+		"-f", "lavfi", "-i", "anullsrc=channel_layout=7.1:sample_rate=48000",
+		"-t", "3", "-c:a", "flac", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Skipf("8-channel fixture gen failed: %v\n%s", err, out)
+	}
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name        string
+		max, source int
+	}{
+		{"no client cap", 0, 8},
+		{"client cap of 8", 8, 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := filepath.Join(outDir, strings.ReplaceAll(tc.name, " ", "_"))
+			if err := os.Mkdir(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			args := AudioRenditionArgs(AudioRenditionJob{
+				SourcePath: src, OutputDir: sub, AudioStreamIndex: 0,
+				MaxChannels: tc.max, SourceChannels: tc.source,
+				PlaylistName:   AudioRenditionPlaylist("a1"),
+				SegmentPattern: AudioRenditionSegmentPattern("a1"),
+			})
+			if out, err := exec.Command("ffmpeg", append([]string{"-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("ffmpeg failed: %v\n%s\nargs: %v", err, out, args)
+			}
+			for _, name := range []string{AudioRenditionPlaylist("a1"), "audio_a1_000.ts"} {
+				if fi, err := os.Stat(filepath.Join(sub, name)); err != nil || fi.Size() == 0 {
+					t.Errorf("%s not written (err=%v); args: %v", name, err, args)
+				}
+			}
+		})
+	}
+}
+
+// sevenOneSource writes a short 7.1 FLAC fixture (with a small video track when
+// withVideo) and returns its path, or skips when ffmpeg is unavailable.
+func sevenOneSource(t *testing.T, withVideo bool) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	src := filepath.Join(t.TempDir(), "src.mkv")
+	args := []string{"-nostdin", "-y", "-loglevel", "error"}
+	if withVideo {
+		args = append(args, "-f", "lavfi", "-i", "testsrc2=s=160x90:r=10")
+	}
+	args = append(args, "-f", "lavfi", "-i", "anullsrc=channel_layout=7.1:sample_rate=48000", "-t", "3")
+	if withVideo {
+		args = append(args, "-c:v", "libx264")
+	}
+	args = append(args, "-c:a", "flac", src)
+	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Skipf("7.1 fixture gen failed: %v\n%s", err, out)
+	}
+	return src
+}
+
+// TestAudioRenditionEncodesUnknownChannelCount: a 7.1 source whose channel count is
+// unknown (SourceChannels 0) emits no -ac, so the layout filter alone must keep the
+// ADTS muxer from refusing it.
+func TestAudioRenditionEncodesUnknownChannelCount(t *testing.T) {
+	src := sevenOneSource(t, false)
+	out := t.TempDir()
+	args := AudioRenditionArgs(AudioRenditionJob{
+		SourcePath: src, OutputDir: out, AudioStreamIndex: 0,
+		PlaylistName:   AudioRenditionPlaylist("a1"),
+		SegmentPattern: AudioRenditionSegmentPattern("a1"),
+	})
+	if hasFlag(args, "-ac") {
+		t.Fatalf("an unknown count must not emit -ac; args: %v", args)
+	}
+	if msg, err := exec.Command("ffmpeg", append([]string{"-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg failed: %v\n%s\nargs: %v", err, msg, args)
+	}
+	for _, name := range []string{AudioRenditionPlaylist("a1"), "audio_a1_000.ts"} {
+		if fi, err := os.Stat(filepath.Join(out, name)); err != nil || fi.Size() == 0 {
+			t.Errorf("%s not written (err=%v); args: %v", name, err, args)
+		}
+	}
+}
+
+// TestOnlineArgsEncodeEightChannelSource: the Online path never probes its remote
+// source, so it emits no -ac; the layout filter must let a 7.1 source through. The
+// run reads a local file, so the https-only protocol whitelist is widened to allow it.
+func TestOnlineArgsEncodeEightChannelSource(t *testing.T) {
+	src := sevenOneSource(t, true)
+	out := t.TempDir()
+	args := OnlineArgs(OnlineJob{Inputs: []string{src}, OutputDir: out})
+	if hasFlag(args, "-ac") {
+		t.Fatalf("the online path must not emit -ac; args: %v", args)
+	}
+	for i := range args {
+		if args[i] == OnlineProtocolWhitelist {
+			args[i] = "file," + OnlineProtocolWhitelist
+		}
+		if args[i] == "-tls_verify" { // an https-only option; a file input rejects it
+			args = append(args[:i], args[i+2:]...)
+			break
+		}
+	}
+	if msg, err := exec.Command("ffmpeg", append([]string{"-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg failed: %v\n%s\nargs: %v", err, msg, args)
+	}
+	for _, name := range []string{PlaylistName, fmt.Sprintf(SegmentPattern, 0)} {
+		if fi, err := os.Stat(filepath.Join(out, name)); err != nil || fi.Size() == 0 {
+			t.Errorf("%s not written (err=%v); args: %v", name, err, args)
+		}
+	}
+}
+
+// TestKnownStereoEncodeHasNoLayoutFilter: a known channel count is capped with -ac and
+// never also filtered, so a stereo encode is exactly as before.
+func TestKnownStereoEncodeHasNoLayoutFilter(t *testing.T) {
+	for name, args := range map[string][]string{
+		"transcode": TranscodeArgs(TranscodeJob{SourcePath: "/m/x.mkv", OutputDir: "/s", HasAudio: true,
+			Audio: AudioPlan{SourceChannels: 2}}),
+		"rendition": AudioRenditionArgs(AudioRenditionJob{SourcePath: "/m/x.mkv", OutputDir: "/s", SourceChannels: 2}),
+	} {
+		if hasFlag(args, "-af") {
+			t.Errorf("%s: a known stereo encode must not carry -af; args: %v", name, args)
+		}
+		if !hasPair(args, "-ac", "2") {
+			t.Errorf("%s: want -ac 2; args: %v", name, args)
+		}
 	}
 }
 
@@ -1637,5 +1794,78 @@ func TestReencodesReadsEveryWayToAskForAnEncode(t *testing.T) {
 		if got := Reencodes(c.args); got != c.want {
 			t.Errorf("Reencodes(%q) = %v, want %v", strings.Join(c.args, " "), got, c.want)
 		}
+	}
+}
+
+// TestThreeChannelSourceUsesLayoutFilter: ffmpeg 9's `-ac 3` resolves to the 2.1
+// layout, which AAC cannot express as a standard channel_configuration, so it writes
+// configuration 0 plus a PCE and every segment after the first is undecodable. A
+// known 3-channel source with no cap therefore emits no -ac and relies on the layout
+// filter, which encodes 3.0 as configuration 3. A client cap of 3 becomes -ac 2.
+func TestThreeChannelSourceUsesLayoutFilter(t *testing.T) {
+	args := AudioRenditionArgs(AudioRenditionJob{
+		SourcePath: "/m/x.mkv", OutputDir: "/s", SourceChannels: 3,
+	})
+	if hasFlag(args, "-ac") {
+		t.Errorf("a 3-channel source with no cap must not emit -ac; args: %v", args)
+	}
+	if !hasPair(args, "-af", aacSafeLayoutsFilter) {
+		t.Errorf("a 3-channel source with no cap must emit %q; args: %v", aacSafeLayoutsFilter, args)
+	}
+	capped := AudioRenditionArgs(AudioRenditionJob{
+		SourcePath: "/m/x.mkv", OutputDir: "/s", SourceChannels: 6, MaxChannels: 3,
+	})
+	if !hasPair(capped, "-ac", "2") {
+		t.Errorf("a client cap of 3 must become -ac 2; args: %v", capped)
+	}
+}
+
+// TestAudioRenditionThreeChannelSegmentsDecodeAlone runs the real ffmpeg on a 3.0
+// source and checks that a segment other than the first decodes on its own, which is
+// what a resuming player does.
+func TestAudioRenditionThreeChannelSegmentsDecodeAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not on PATH")
+	}
+	dir := t.TempDir()
+	args := AudioRenditionArgs(AudioRenditionJob{
+		SourcePath: "anullsrc=channel_layout=3.0:sample_rate=48000", OutputDir: dir,
+		SourceChannels: 3,
+		PlaylistName:   AudioRenditionPlaylist("a1"),
+		SegmentPattern: AudioRenditionSegmentPattern("a1"),
+	})
+	// Feed the synthetic source through lavfi: swap the input and bound its length.
+	var full []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-i" && args[i+1] == "anullsrc=channel_layout=3.0:sample_rate=48000" {
+			full = append(full, "-f", "lavfi", "-t", "10", "-i", args[i+1])
+			i++
+			continue
+		}
+		full = append(full, args[i])
+	}
+	if out, err := exec.Command("ffmpeg", append([]string{"-loglevel", "error"}, full...)...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg failed: %v\n%s\nargs: %v", err, out, full)
+	}
+	seg := filepath.Join(dir, "audio_a1_001.ts")
+	if _, err := os.Stat(seg); err != nil {
+		t.Fatalf("segment 001 not written: %v (args: %v)", err, full)
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=channels", "-of", "csv=p=0", seg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe failed: %v\n%s", err, out)
+	}
+	if n, _ := strconv.Atoi(strings.Fields(string(out) + " 0")[0]); n <= 0 {
+		t.Errorf("segment 001 probed with %q channels; it cannot be decoded on its own", strings.TrimSpace(string(out)))
+	}
+	if msg, err := exec.Command("ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", seg, "-f", "null", "-").CombinedOutput(); err != nil {
+		t.Errorf("segment 001 does not decode alone: %v\n%s", err, msg)
 	}
 }

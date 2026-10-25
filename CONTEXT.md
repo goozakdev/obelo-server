@@ -327,6 +327,14 @@ _Avoid_: GPU stats (informal — telemetry is the noun), Metrics (too generic).
 A single active stream from server to one client, including the chosen tier and (if transcoding) the running FFmpeg job and its resource cost.
 _Avoid_: Stream, Transcode job (those are parts of it).
 
+**Step-down ladder** (one entry: a _rung_):
+The ordered list of ways a Title can play for this client, best first by delivered quality, with the rung being played marked, handed to the client with each playback decision so it can drop to a cheaper rung — or climb back — without a round-trip to ask what exists. It is derived from what the Server would actually play for each candidate, not guessed. Each rung is just the choice the client sends back on its next negotiation; the Server holds no ladder state. The client decides when to step and how far — skipping rungs when the drop is steep — because only it sees playback falter. Not an HLS ABR ladder: nothing switches in-band; a step is a new Playback session.
+_Avoid_: ABR ladder (in-band adaptive variants, which Obelo does not build), Quality list, Fallback list.
+
+**Decode exclusion**:
+A codec — or a codec at a resolution — that a Device has proven it cannot play, learned from a decode failure or from falling behind, and withheld from its Capability profile on every later play ([ADR-0071](./docs/adr/0071-automatic-step-down-is-client-driven-over-a-server-provided-ladder.md)). Held by the client, not the Server: it is a fact about the Device, not a choice about the Title, so it never touches Watch state. Not permanent — it lapses when the app or OS version changes, or when the user resets it, because a driver update can fix a decoder. Bandwidth never produces one: a slow link says nothing about the Device.
+_Avoid_: Codec blacklist (implies permanence), Device quirk, Remembered quality (bandwidth is never remembered).
+
 **Queue**:
 The ordered, in-session list of Titles the player walks; the entry at the current position is playing now and the rest are up next. Built on the fly from a play context (an Album from a Track forward, a Show from an Episode forward, a Playlist, or a single Title) and mutable in real time (reorder/append/remove) without interrupting the current Title; emptying it stops playback. By default the walk stops cleanly at the last entry (no loop); Shuffle mode and Repeat mode modify it. Walked by the persistent Now Playing player, which survives navigation ([ADR-0018](./docs/adr/0018-persistent-shell-owned-player.md)). Client-side and per playback session — not persisted server-side, not shared across Devices.
 _Avoid_: Playlist (the saved, owned, persisted list a Queue can be built from), Up Next (the computed next-unwatched-Episode view).

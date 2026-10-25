@@ -632,8 +632,12 @@ type Session struct {
 	// Transcoded is true when ffmpeg encodes the variant into HLS (C), false when its
 	// bytes are relayed (B).
 	Transcoded bool
-	StartedAt  time.Time
-	LastSeen   time.Time
+	// StepDown is the Step-down ladder for this play (ADR-0071): every rung the Server can
+	// produce for the item, best first, exactly one marked current. Never nil on a
+	// Session Play returned.
+	StepDown  []playback.StepRung
+	StartedAt time.Time
+	LastSeen  time.Time
 
 	// run is the ffmpeg encode of a transcoded session, nil for a relay. A restart
 	// after a re-resolve replaces it, under Service.mu.
@@ -670,6 +674,11 @@ type PlayInput struct {
 	Profile                  playback.DeviceProfile
 	// Constraints are already clamped to the User's Playback ceiling.
 	Constraints playback.Constraints
+	// Ceiling is the User's Playback ceiling alone, which bounds the Step-down ladder.
+	Ceiling playback.Constraints
+	// Asked is what the client sent, before the clamp: the Step-down ladder marks the
+	// rung the client requested current.
+	Asked playback.Constraints
 }
 
 // Play resolves the item once, chooses a variant the client can play as-is under
@@ -713,7 +722,8 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 		ID: id, UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
 		SourceName: sourceName, ItemTitle: itemTitle,
 		Variant: plan.Variant, Transcoded: plan.Transcode, StartedAt: now, LastSeen: now, run: r,
-		profile: in.Profile, constraints: in.Constraints, re: &reState{},
+		StepDown: playback.OnlineStepDown(in.Profile, in.Ceiling, in.Asked, in.Constraints, variants, plan, s.transcoder != nil),
+		profile:  in.Profile, constraints: in.Constraints, re: &reState{},
 		ctx: sctx, cancel: cancel,
 	}
 	s.mu.Lock()
