@@ -317,9 +317,7 @@ func RemuxArgs(job RemuxJob) []string {
 	// stays a pure copy.
 	if job.Seek.mustEncodeCopiedAudio() && !job.VideoOnly {
 		args = append(args, "-c:v", "copy", "-c:a", audioEncoderAAC)
-		if ch := encodedAudioChannels(0, job.AudioSourceChannels); ch > 0 {
-			args = append(args, "-ac", strconv.Itoa(ch))
-		}
+		args = appendAACChannelArgs(args, encodedAudioChannels(0, job.AudioSourceChannels))
 	} else {
 		args = append(args, "-c", "copy")
 	}
@@ -1001,7 +999,7 @@ type AudioPlan struct {
 	// to ENCODE audio it would rather have copied (a realignment — see
 	// SeekOffset.mustEncodeCopiedAudio) can pick a channel count the ADTS header can
 	// actually express. Copying is exempt: a copied stream keeps whatever layout it
-	// already had. 0 when unknown, which emits no -ac and leaves ffmpeg's default.
+	// already had. 0 when unknown, which emits no -ac but aacSafeLayoutsFilter instead.
 	SourceChannels int
 	// MaxBitrate, when > 0 and the audio is re-encoded, holds the AAC output to this
 	// bitrate in bits/sec (-b:a). Set only for an audio-only job under a bitrate cap
@@ -1012,10 +1010,15 @@ type AudioPlan struct {
 // adtsExpressibleChannels maps a channel count to the nearest count at or below it
 // that an ADTS header can describe, or 0 when the count is unknown.
 //
-// ADTS carries a 3-bit channel_configuration covering 1, 2, 3, 4, 5, 6 and 8
-// channels. Anything else — 7 (6.1), or more than 8 — has no representation, and
-// ffmpeg's ADTS muxer REFUSES the stream outright: "channelConfiguration > 7 is not
-// supported in ADTS", after which the job writes no output at all. That matters
+// ADTS carries a 3-bit channel_configuration, so only 1 through 6 channels are
+// usable here, and 3 only through encodedAudioChannels (its -ac form is broken: see
+// there). 7 (6.1) has no configuration. 8 is the trap: AAC does define 7.1, but
+// as channel_configuration 12, and ffmpeg 9's `-ac 8` resolves to that 7.1 layout —
+// which does not fit in 3 bits. Forcing a layout that does fit (7.1(wide)) is
+// accepted but relabels the side channels as front-centre ones, so they would play
+// from the wrong speakers. Hence an encode never exceeds 6: 7.1 is downmixed to 5.1.
+// Past the cap ffmpeg's ADTS muxer REFUSES the stream outright: "channelConfiguration
+// > 7 is not supported in ADTS", after which the job writes no output at all. That matters
 // because a copied stream can carry such a layout perfectly well (its channel map
 // rides in a PCE), so re-encoding a copied 6.1 track without capping it converts
 // silent-audio into a job that produces nothing and hangs playback entirely. Found
@@ -1025,17 +1028,23 @@ func adtsExpressibleChannels(n int) int {
 	case n <= 0:
 		return 0
 	case n <= 6:
-		return n // 1..6 all have a configuration
-	case n == 7:
-		return 6 // 6.1 has none; 5.1 is the nearest expressible layout
+		return n // 1..6 have a configuration, but -ac 3 does not reach it (encodedAudioChannels)
 	default:
-		return 8 // 8 is configuration 7; anything above has none
+		return 6 // 6.1 has none, and 7.1 is configuration 12; 5.1 is the nearest
 	}
 }
 
 // encodedAudioChannels resolves the -ac value for a job that is ENCODING audio: the
-// client's cap when one applies, else the source count capped to what ADTS can
-// express. Returns 0 only when the source count is unknown.
+// client's cap when one applies, else the source count, both capped to the 6 channels
+// ADTS can express (see adtsExpressibleChannels: a client cap of 8 would otherwise
+// reach `-ac 8`, which ffmpeg 9 resolves to 7.1 and the ADTS muxer refuses). Returns
+// 0 when the source count is unknown, and also for a 3-channel source with no cap.
+//
+// 3 is the exception to emitting -ac: ffmpeg 9's `-ac 3` resolves to the 2.1 layout,
+// which has no standard channel_configuration, so AAC writes configuration 0 plus a
+// PCE and every segment after the first is undecodable. Returning 0 sends a 3.0
+// source through aacSafeLayoutsFilter instead, which encodes 3.0 as configuration 3
+// (and 2.1 as stereo). A client cap of 3 becomes 2 for the same reason.
 //
 // It emits -ac even when the count is UNCHANGED, and that is the point rather than a
 // redundancy. -ac makes ffmpeg resolve the output to the DEFAULT layout for that
@@ -1057,9 +1066,29 @@ func adtsExpressibleChannels(n int) int {
 // own configuration.
 func encodedAudioChannels(maxChannels, sourceChannels int) int {
 	if maxChannels > 0 {
-		return maxChannels
+		if maxChannels == 3 {
+			return 2
+		}
+		return adtsExpressibleChannels(maxChannels)
+	}
+	if sourceChannels == 3 {
+		return 0
 	}
 	return adtsExpressibleChannels(sourceChannels)
+}
+
+// aacSafeLayoutsFilter restricts an AAC encode to layouts ADTS can describe when the
+// channel count is not known up front, so -ac cannot be capped. It downmixes 6.1 and
+// 7.1 to 5.1 and leaves mono and stereo alone; -ac 6 would upmix a stereo source.
+const aacSafeLayoutsFilter = "aformat=channel_layouts=mono|stereo|3.0|4.0|5.0|5.1"
+
+// appendAACChannelArgs adds the channel handling for an AAC encode: -ac when the
+// (already capped) count is known, else aacSafeLayoutsFilter.
+func appendAACChannelArgs(args []string, ch int) []string {
+	if ch > 0 {
+		return append(args, "-ac", strconv.Itoa(ch))
+	}
+	return append(args, "-af", aacSafeLayoutsFilter)
 }
 
 // BurnSubtitle names the image Subtitle track to burn into the video frames
@@ -1267,9 +1296,7 @@ func TranscodeArgs(job TranscodeJob) []string {
 			args = append(args, "-c:a", "copy")
 		} else {
 			args = append(args, "-c:a", audioEncoderAAC)
-			if ch := encodedAudioChannels(job.Audio.MaxChannels, job.Audio.SourceChannels); ch > 0 {
-				args = append(args, "-ac", strconv.Itoa(ch))
-			}
+			args = appendAACChannelArgs(args, encodedAudioChannels(job.Audio.MaxChannels, job.Audio.SourceChannels))
 			if job.Audio.MaxBitrate > 0 {
 				args = append(args, "-b:a", strconv.FormatInt(job.Audio.MaxBitrate, 10))
 			}
@@ -1352,9 +1379,7 @@ func AudioRenditionArgs(job AudioRenditionJob) []string {
 		args = append(args, "-c:a", "copy")
 	} else {
 		args = append(args, "-c:a", audioEncoderAAC)
-		if ch := encodedAudioChannels(job.MaxChannels, job.SourceChannels); ch > 0 {
-			args = append(args, "-ac", strconv.Itoa(ch))
-		}
+		args = appendAACChannelArgs(args, encodedAudioChannels(job.MaxChannels, job.SourceChannels))
 	}
 	args = append(args, job.Seek.outputOffsetArgs()...)
 	return append(args, hlsOutputArgsTyped(job.OutputDir, job.PlaylistName, job.SegmentPattern, job.InitName, job.Seek.StartNumber)...)

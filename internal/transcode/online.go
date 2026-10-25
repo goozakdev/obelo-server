@@ -88,6 +88,7 @@ func OnlineArgs(job OnlineJob) []string {
 		args = append(args, "-b:v", b, "-maxrate", b, "-bufsize", strconv.FormatInt(job.MaxBitrate*2, 10))
 	}
 	args = append(args, "-c:a", audioEncoderAAC)
+	args = appendAACChannelArgs(args, 0)
 
 	// An EVENT playlist, not VOD: the muxer writes a VOD playlist only when it has
 	// finished the whole input, and the player must start long before that. The
